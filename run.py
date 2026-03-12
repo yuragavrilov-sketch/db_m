@@ -12,9 +12,6 @@ from app import create_app
 
 
 def main() -> None:
-    import signal
-    import time
-
     # CLI arg takes priority over WORK_TYPE env var: python run.py [web|worker]
     work_type = sys.argv[1] if len(sys.argv) > 1 else os.getenv("WORK_TYPE", "web")
     app = create_app(work_type=work_type)

@@ -23,6 +23,18 @@
             <button type="button" class="filter-btn" data-filter="unknown">Неизвестно</button>
         </div>
 
+        <div class="schema-filters" id="cat-filters" style="margin-top:4px">
+            <span style="font-size:11px;color:var(--muted);align-self:center">Расхождение:</span>
+            <button type="button" class="filter-btn cat-btn is-active" data-cat="">Любое</button>
+            <button type="button" class="filter-btn cat-btn" data-cat="cols">Колонки</button>
+            <button type="button" class="filter-btn cat-btn" data-cat="idx">Индексы</button>
+            <button type="button" class="filter-btn cat-btn" data-cat="pk">PK</button>
+            <button type="button" class="filter-btn cat-btn" data-cat="fk">FK</button>
+            <button type="button" class="filter-btn cat-btn" data-cat="uq">UQ</button>
+            <button type="button" class="filter-btn cat-btn" data-cat="ck">CK</button>
+            <button type="button" class="filter-btn cat-btn" data-cat="trg">Триггеры</button>
+        </div>
+
         <div class="schema-search-row">
             <input type="search" id="schema-search" placeholder="Поиск по таблице..." autocomplete="off">
             <div id="sse-state" class="sse-state">Live: подключение...</div>
@@ -184,12 +196,21 @@
     text-decoration: underline dotted;
 }
 .diff-toggle-same:hover { color: var(--primary); }
+
+/* Diff category chips in table rows */
+.diff-cat-chips { display: inline-flex; gap: 3px; flex-wrap: wrap; margin-top: 3px; }
+.diff-cat-chip {
+    display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px;
+    font-weight: 700; font-family: monospace; background: #fef3c7; color: #92400e;
+    border: 1px solid #fcd34d;
+}
 </style>
 <script>
 const PAGE_SIZE_KEY = "schema_page_size";
 
 const state = {
     filter:       "all",
+    catFilter:    "",
     rows:         [],
     detailsOpen:  new Set(),
     sse:          null,
@@ -199,6 +220,13 @@ const state = {
     page:         1,
     pageSize:     parseInt(localStorage.getItem(PAGE_SIZE_KEY) || "25", 10),
 };
+
+// ── Details cache (avoids re-fetching on every renderRows) ────────────────────
+const detailsCache   = new Map();   // id → rendered HTML string
+const detailsInflight = new Set();  // ids currently being fetched
+
+function invalidateDetail(id) { detailsCache.delete(id); }
+function invalidateAllDetails() { detailsCache.clear(); }
 
 // ── Утилиты ───────────────────────────────────────────────────────────────────
 
@@ -256,8 +284,13 @@ function applySort(rows) {
     });
 }
 
+function applyCatFilter(rows) {
+    if (!state.catFilter) return rows;
+    return rows.filter(r => (r.diff_categories || []).includes(state.catFilter));
+}
+
 function visibleRows() {
-    return applySort(applySearch(state.rows));
+    return applySort(applyCatFilter(applySearch(state.rows)));
 }
 
 function pageSlice(rows) {
@@ -303,11 +336,15 @@ function renderRows() {
 
     tbody.innerHTML = page.map((row) => {
         const open = state.detailsOpen.has(row.id);
+        const cats = (row.diff_categories || []);
+        const catChips = cats.length
+            ? `<div class="diff-cat-chips">${cats.map(c => `<span class="diff-cat-chip">${esc(c)}</span>`).join("")}</div>`
+            : "";
         return `
         <tr data-id="${row.id}">
             <td>${esc(fmtTable(row.source_schema, row.source_table))}</td>
             <td>${esc(fmtTable(row.target_schema, row.target_table))}</td>
-            <td><span class="${badgeClass(row.compare_status)}">${esc(row.compare_status)}</span></td>
+            <td><span class="${badgeClass(row.compare_status)}">${esc(row.compare_status)}</span>${catChips}</td>
             <td>${fmtDate(row.last_compared_at)}</td>
             <td class="actions">
                 <button type="button" class="js-compare-one" data-id="${row.id}">Сравнить</button>
@@ -322,6 +359,7 @@ function renderRows() {
     document.querySelectorAll(".js-compare-one").forEach((btn) => {
         btn.addEventListener("click", async () => {
             try {
+                invalidateDetail(btn.dataset.id);
                 const r = await api(`/api/schema/mappings/${btn.dataset.id}/compare`, "POST", {});
                 showMsg(`Job поставлен: ${r.job_id}`);
             } catch (err) { showMsg(`Ошибка: ${err.message}`); }
@@ -346,7 +384,16 @@ function renderRows() {
         });
     });
 
-    state.detailsOpen.forEach((id) => loadDetails(id));
+    // Restore cached details or fetch only what's missing — no parallel storm
+    state.detailsOpen.forEach((id) => {
+        const box = document.getElementById(`details-${id}`);
+        if (!box) return;
+        if (detailsCache.has(id)) {
+            box.innerHTML = detailsCache.get(id);
+        } else {
+            loadDetails(id);
+        }
+    });
 }
 
 // ── Рендер деталей ────────────────────────────────────────────────────────────
@@ -692,31 +739,62 @@ function renderDetails(d) {
 async function loadDetails(id) {
     const box = document.getElementById(`details-${id}`);
     if (!box) return;
+    if (detailsCache.has(id)) { box.innerHTML = detailsCache.get(id); return; }
+    if (detailsInflight.has(id)) return;
+    detailsInflight.add(id);
     try {
         const d = await api(`/api/schema/mappings/${id}`);
-        box.innerHTML = renderDetails(d);
-    } catch (err) { box.textContent = `Ошибка: ${err.message}`; }
+        const html = renderDetails(d);
+        detailsCache.set(id, html);
+        const b2 = document.getElementById(`details-${id}`);  // re-query after await
+        if (b2) b2.innerHTML = html;
+    } catch (err) {
+        const b2 = document.getElementById(`details-${id}`);
+        if (b2) b2.textContent = `Ошибка: ${err.message}`;
+    } finally {
+        detailsInflight.delete(id);
+    }
 }
 
 // ── Кнопки фильтра ────────────────────────────────────────────────────────────
 
 function updateFilterButtons(summary) {
     const titles = {all: "Все", same: "Одинаковые", different: "Разные", missing: "Отсутствуют", unknown: "Неизвестно"};
-    document.querySelectorAll(".filter-btn").forEach((btn) => {
+    document.querySelectorAll(".filter-btn[data-filter]").forEach((btn) => {
         const key = btn.dataset.filter;
         const cnt = summary && summary[key] != null ? summary[key] : 0;
         btn.textContent = `${titles[key]} (${cnt})`;
         btn.classList.toggle("is-active", key === state.filter);
     });
+    document.querySelectorAll(".cat-btn").forEach((btn) => {
+        btn.classList.toggle("is-active", btn.dataset.cat === state.catFilter);
+    });
 }
 
 // ── Загрузка данных ───────────────────────────────────────────────────────────
 
+let _reloadInFlight = false;
+let _reloadPending  = false;
+
 async function reload() {
-    const data = await api(`/api/schema/mappings?filter=${encodeURIComponent(state.filter)}`);
-    state.rows = data.items || [];
-    updateFilterButtons(data.summary || {});
-    renderRows();
+    if (_reloadInFlight) { _reloadPending = true; return; }
+    _reloadInFlight = true;
+    _reloadPending  = false;
+    try {
+        const data = await api(`/api/schema/mappings?filter=${encodeURIComponent(state.filter)}`);
+        state.rows = data.items || [];
+        updateFilterButtons(data.summary || {});
+        renderRows();
+    } finally {
+        _reloadInFlight = false;
+        if (_reloadPending) { _reloadPending = false; reload(); }
+    }
+}
+
+let _sseReloadTimer = null;
+function scheduleReload() {
+    clearTimeout(_sseReloadTimer);
+    _sseReloadTimer = setTimeout(() => reload().catch(() => {}), 350);
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
@@ -733,11 +811,15 @@ function connectSse() {
     const es = new EventSource("/api/events/stream");
     state.sse = es;
     es.onopen = () => setSseState("подключено", false);
-    es.addEventListener("schema_compare_updated", () => reload().catch(() => {}));
+    es.addEventListener("schema_compare_updated", (e) => {
+        const p = JSON.parse(e.data || "{}");
+        if (p.entity_id) invalidateDetail(p.entity_id);
+        scheduleReload();
+    });
     es.addEventListener("job_updated", (e) => {
         const p = JSON.parse(e.data || "{}");
         if (p.job_type === "schema_compare_table" || p.job_type === "schema_compare_all") {
-            reload().catch(() => {});
+            scheduleReload();
         }
     });
     es.onerror = () => {
@@ -757,11 +839,20 @@ document.getElementById("compare-all-btn").addEventListener("click", async () =>
     } catch (err) { showMsg(`Ошибка: ${err.message}`); }
 });
 
-document.querySelectorAll(".filter-btn").forEach((btn) => {
+document.querySelectorAll(".filter-btn[data-filter]").forEach((btn) => {
     btn.addEventListener("click", async () => {
         state.filter = btn.dataset.filter;
         state.page = 1;
         await reload().catch((err) => showMsg(`Ошибка: ${err.message}`));
+    });
+});
+
+document.querySelectorAll(".cat-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+        state.catFilter = btn.dataset.cat;
+        state.page = 1;
+        document.querySelectorAll(".cat-btn").forEach(b => b.classList.toggle("is-active", b === btn));
+        renderRows();
     });
 });
 

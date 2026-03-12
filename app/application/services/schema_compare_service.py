@@ -621,6 +621,19 @@ class SchemaCompareService:
             engine.dispose()
 
     @staticmethod
+    def _diff_categories(diff_summary: dict | None) -> list[str]:
+        """Return short keys for diff categories that are NOT same."""
+        if not diff_summary:
+            return []
+        diff = diff_summary.get("diff", {})
+        short = {
+            "columns": "cols", "indexes": "idx", "primary_key": "pk",
+            "foreign_keys": "fk", "unique_constraints": "uq",
+            "check_constraints": "ck", "triggers": "trg",
+        }
+        return [v for k, v in short.items() if not (diff.get(k) or {}).get("same", True)]
+
+    @staticmethod
     def _to_dto(row: SchemaMapping) -> dict[str, Any]:
         return {
             "id": str(row.id),
@@ -629,6 +642,7 @@ class SchemaCompareService:
             "target_schema": row.target_schema,
             "target_table": row.target_table,
             "compare_status": row.compare_status,
+            "diff_categories": SchemaCompareService._diff_categories(row.diff_summary),
             "last_compared_at": row.last_compared_at.isoformat() if row.last_compared_at else None,
             "last_job_id": str(row.last_job_id) if row.last_job_id else None,
         }
