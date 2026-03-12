@@ -14,6 +14,7 @@
             <button type="button" id="compare-all-btn">Сравнить все</button>
             <span id="schema-message" class="message"></span>
         </div>
+
         <div class="schema-filters" id="schema-filters">
             <button type="button" class="filter-btn is-active" data-filter="all">Все</button>
             <button type="button" class="filter-btn" data-filter="same">Одинаковые</button>
@@ -21,17 +22,29 @@
             <button type="button" class="filter-btn" data-filter="missing">Отсутствуют</button>
             <button type="button" class="filter-btn" data-filter="unknown">Неизвестно</button>
         </div>
-        <div id="sse-state" class="sse-state">Live: подключение...</div>
+
+        <div class="schema-search-row">
+            <input type="search" id="schema-search" placeholder="Поиск по таблице..." autocomplete="off">
+            <div id="sse-state" class="sse-state">Live: подключение...</div>
+        </div>
     </div>
 
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
-                    <th>Source</th>
-                    <th>Target</th>
-                    <th>Статус</th>
-                    <th>Последнее сравнение</th>
+                    <th class="sortable" data-col="source_table">
+                        Source <span class="sort-icon" data-col="source_table"></span>
+                    </th>
+                    <th class="sortable" data-col="target_table">
+                        Target <span class="sort-icon" data-col="target_table"></span>
+                    </th>
+                    <th class="sortable" data-col="compare_status">
+                        Статус <span class="sort-icon" data-col="compare_status"></span>
+                    </th>
+                    <th class="sortable" data-col="last_compared_at">
+                        Последнее сравнение <span class="sort-icon" data-col="last_compared_at"></span>
+                    </th>
                     <th>Действия</th>
                 </tr>
             </thead>
@@ -40,18 +53,40 @@
             </tbody>
         </table>
     </div>
+
+    <div class="pagination-bar" id="pagination-bar">
+        <button type="button" id="pg-prev" disabled>&#8592; Пред.</button>
+        <span id="pg-info"></span>
+        <button type="button" id="pg-next" disabled>След. &#8594;</button>
+        <span class="text-muted" style="margin-left:12px">по
+            <select id="pg-size">
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+            строк
+        </span>
+    </div>
 </section>
 {% endblock %}
 
 {% block scripts %}
 <script>
+const PAGE_SIZE_KEY = "schema_page_size";
+
 const state = {
-    filter: "all",
-    rows: [],
-    detailsOpen: new Set(),
-    sse: null,
+    filter:       "all",
+    rows:         [],
+    detailsOpen:  new Set(),
+    sse:          null,
     reconnectTimer: null,
+    sort:         {col: "source_table", dir: "asc"},
+    search:       "",
+    page:         1,
+    pageSize:     parseInt(localStorage.getItem(PAGE_SIZE_KEY) || "25", 10),
 };
+
+// ── Утилиты ───────────────────────────────────────────────────────────────────
 
 function badgeClass(status) {
     const map = {same: "badge-same", different: "badge-different", missing: "badge-missing"};
@@ -59,7 +94,11 @@ function badgeClass(status) {
 }
 
 function fmtTable(schema, table) {
-    return table ? `${schema || "public"}.${table}` : "—";
+    return table ? `${schema || ""}.${table}` : "—";
+}
+
+function fmtDate(iso) {
+    return iso ? iso.replace("T", " ").slice(0, 19) : "—";
 }
 
 function showMsg(text) {
@@ -77,29 +116,88 @@ async function api(url, method = "GET", body = null) {
     return data;
 }
 
+// ── Фильтрация / сортировка / пагинация ──────────────────────────────────────
+
+function applySearch(rows) {
+    const q = state.search.toLowerCase().trim();
+    if (!q) return rows;
+    return rows.filter((r) => {
+        const src = fmtTable(r.source_schema, r.source_table).toLowerCase();
+        const tgt = fmtTable(r.target_schema, r.target_table).toLowerCase();
+        return src.includes(q) || tgt.includes(q);
+    });
+}
+
+function applySort(rows) {
+    const {col, dir} = state.sort;
+    return [...rows].sort((a, b) => {
+        const av = (a[col] || "").toString();
+        const bv = (b[col] || "").toString();
+        return dir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+}
+
+function visibleRows() {
+    return applySort(applySearch(state.rows));
+}
+
+function pageSlice(rows) {
+    const start = (state.page - 1) * state.pageSize;
+    return rows.slice(start, start + state.pageSize);
+}
+
+// ── Рендер ────────────────────────────────────────────────────────────────────
+
+function renderSortIcons() {
+    document.querySelectorAll(".sort-icon").forEach((el) => {
+        const col = el.dataset.col;
+        if (col === state.sort.col) {
+            el.textContent = state.sort.dir === "asc" ? " ▲" : " ▼";
+        } else {
+            el.textContent = "";
+        }
+    });
+}
+
+function renderPagination(total) {
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    state.page = Math.min(state.page, totalPages);
+    const start = total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+    const end   = Math.min(state.page * state.pageSize, total);
+    document.getElementById("pg-info").textContent =
+        `${start}–${end} из ${total} (стр. ${state.page} / ${totalPages})`;
+    document.getElementById("pg-prev").disabled = state.page <= 1;
+    document.getElementById("pg-next").disabled = state.page >= totalPages;
+}
+
 function renderRows() {
+    renderSortIcons();
+    const all  = visibleRows();
+    const page = pageSlice(all);
+    renderPagination(all.length);
+
     const tbody = document.getElementById("mapping-rows");
-    if (!state.rows.length) {
-        tbody.innerHTML = '<tr><td colspan="5">Нет строк для выбранного фильтра</td></tr>';
+    if (!page.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-muted">Нет строк</td></tr>';
         return;
     }
 
-    tbody.innerHTML = state.rows.map((row) => {
+    tbody.innerHTML = page.map((row) => {
         const open = state.detailsOpen.has(row.id);
         return `
-            <tr data-id="${row.id}">
-                <td>${fmtTable(row.source_schema, row.source_table)}</td>
-                <td>${fmtTable(row.target_schema, row.target_table)}</td>
-                <td><span class="${badgeClass(row.compare_status)}">${row.compare_status}</span></td>
-                <td>${row.last_compared_at ? row.last_compared_at.replace("T", " ").slice(0, 19) : "—"}</td>
-                <td class="actions">
-                    <button type="button" class="js-compare-one" data-id="${row.id}">Сравнить</button>
-                    <button type="button" class="js-toggle-details btn-secondary" data-id="${row.id}">${open ? "Скрыть" : "Детали"}</button>
-                </td>
-            </tr>
-            <tr data-details-for="${row.id}" style="display:${open ? "table-row" : "none"}">
-                <td colspan="5"><div class="details-box" id="details-${row.id}">Загрузка деталей...</div></td>
-            </tr>`;
+        <tr data-id="${row.id}">
+            <td>${fmtTable(row.source_schema, row.source_table)}</td>
+            <td>${fmtTable(row.target_schema, row.target_table)}</td>
+            <td><span class="${badgeClass(row.compare_status)}">${row.compare_status}</span></td>
+            <td>${fmtDate(row.last_compared_at)}</td>
+            <td class="actions">
+                <button type="button" class="js-compare-one" data-id="${row.id}">Сравнить</button>
+                <button type="button" class="js-toggle-details btn-secondary" data-id="${row.id}">${open ? "Скрыть" : "Детали"}</button>
+            </td>
+        </tr>
+        <tr data-details-for="${row.id}" style="display:${open ? "table-row" : "none"}">
+            <td colspan="5"><div class="details-box" id="details-${row.id}">Загрузка деталей...</div></td>
+        </tr>`;
     }).join("");
 
     document.querySelectorAll(".js-compare-one").forEach((btn) => {
@@ -107,24 +205,22 @@ function renderRows() {
             try {
                 const r = await api(`/api/schema/mappings/${btn.dataset.id}/compare`, "POST", {});
                 showMsg(`Job поставлен: ${r.job_id}`);
-            } catch (err) {
-                showMsg(`Ошибка: ${err.message}`);
-            }
+            } catch (err) { showMsg(`Ошибка: ${err.message}`); }
         });
     });
 
     document.querySelectorAll(".js-toggle-details").forEach((btn) => {
         btn.addEventListener("click", async () => {
             const id = btn.dataset.id;
-            const row = document.querySelector(`tr[data-details-for="${id}"]`);
-            if (!row) return;
+            const detRow = document.querySelector(`tr[data-details-for="${id}"]`);
+            if (!detRow) return;
             if (state.detailsOpen.has(id)) {
                 state.detailsOpen.delete(id);
-                row.style.display = "none";
+                detRow.style.display = "none";
                 btn.textContent = "Детали";
             } else {
                 state.detailsOpen.add(id);
-                row.style.display = "table-row";
+                detRow.style.display = "table-row";
                 btn.textContent = "Скрыть";
                 await loadDetails(id);
             }
@@ -146,10 +242,10 @@ async function loadDetails(id) {
             diff_summary: d.diff_summary,
             last_job: d.last_job,
         }, null, 2)}</pre>`;
-    } catch (err) {
-        box.textContent = `Ошибка: ${err.message}`;
-    }
+    } catch (err) { box.textContent = `Ошибка: ${err.message}`; }
 }
+
+// ── Кнопки фильтра ────────────────────────────────────────────────────────────
 
 function updateFilterButtons(summary) {
     const titles = {all: "Все", same: "Одинаковые", different: "Разные", missing: "Отсутствуют", unknown: "Неизвестно"};
@@ -161,12 +257,16 @@ function updateFilterButtons(summary) {
     });
 }
 
+// ── Загрузка данных ───────────────────────────────────────────────────────────
+
 async function reload() {
     const data = await api(`/api/schema/mappings?filter=${encodeURIComponent(state.filter)}`);
     state.rows = data.items || [];
     updateFilterButtons(data.summary || {});
     renderRows();
 }
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
 
 function setSseState(text, disconnected) {
     const el = document.getElementById("sse-state");
@@ -179,18 +279,14 @@ function connectSse() {
     setSseState("подключение...", true);
     const es = new EventSource("/api/events/stream");
     state.sse = es;
-
     es.onopen = () => setSseState("подключено", false);
-
     es.addEventListener("schema_compare_updated", () => reload().catch(() => {}));
-
     es.addEventListener("job_updated", (e) => {
         const p = JSON.parse(e.data || "{}");
         if (p.job_type === "schema_compare_table" || p.job_type === "schema_compare_all") {
             reload().catch(() => {});
         }
     });
-
     es.onerror = () => {
         setSseState("переподключение...", true);
         es.close();
@@ -199,21 +295,67 @@ function connectSse() {
     };
 }
 
+// ── События ───────────────────────────────────────────────────────────────────
+
 document.getElementById("compare-all-btn").addEventListener("click", async () => {
     try {
         const r = await api("/api/schema/compare-all", "POST", {});
         showMsg(`Запущено сравнение всех таблиц, job: ${r.job_id}`);
-    } catch (err) {
-        showMsg(`Ошибка: ${err.message}`);
-    }
+    } catch (err) { showMsg(`Ошибка: ${err.message}`); }
 });
 
 document.querySelectorAll(".filter-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
         state.filter = btn.dataset.filter;
+        state.page = 1;
         await reload().catch((err) => showMsg(`Ошибка: ${err.message}`));
     });
 });
+
+// Поиск
+let searchTimer = null;
+document.getElementById("schema-search").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+        state.search = e.target.value;
+        state.page = 1;
+        renderRows();
+    }, 200);
+});
+
+// Сортировка
+document.querySelectorAll("th.sortable").forEach((th) => {
+    th.style.cursor = "pointer";
+    th.addEventListener("click", () => {
+        const col = th.dataset.col;
+        if (state.sort.col === col) {
+            state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+        } else {
+            state.sort.col = col;
+            state.sort.dir = "asc";
+        }
+        state.page = 1;
+        renderRows();
+    });
+});
+
+// Пагинация
+document.getElementById("pg-prev").addEventListener("click", () => {
+    if (state.page > 1) { state.page--; renderRows(); }
+});
+document.getElementById("pg-next").addEventListener("click", () => {
+    state.page++;
+    renderRows();
+});
+document.getElementById("pg-size").value = String(state.pageSize);
+document.getElementById("pg-size").addEventListener("change", (e) => {
+    state.pageSize = parseInt(e.target.value, 10);
+    state.page = 1;
+    localStorage.setItem(PAGE_SIZE_KEY, String(state.pageSize));
+    renderRows();
+});
+
+// ── Старт ─────────────────────────────────────────────────────────────────────
 
 reload().catch((err) => showMsg(`Ошибка загрузки: ${err.message}`));
 connectSse();

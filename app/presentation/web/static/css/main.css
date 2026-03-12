@@ -337,6 +337,50 @@ tbody tr:nth-child(even) {
   margin-bottom: 12px;
 }
 
+.schema-search-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.schema-search-row input[type="search"] {
+  width: 280px;
+  flex-shrink: 0;
+}
+
+/* ─── Sortable headers ─── */
+th.sortable:hover {
+  background: #eef3fb;
+  user-select: none;
+}
+
+.sort-icon {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ─── Pagination bar ─── */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.pagination-bar button {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.pagination-bar select {
+  width: auto;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
 .jobs-filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
