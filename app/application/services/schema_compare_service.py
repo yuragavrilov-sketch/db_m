@@ -155,16 +155,14 @@ class SchemaCompareService:
             eq_fn=lambda s, t: s.get("sqltext", "") == t.get("sqltext", ""),
             detail_fn=lambda x: {"sqltext": x.get("sqltext", "")},
         )
-        trig_diff = self._compare_named_items(
-            source_meta["triggers"],
-            target_meta["triggers"],
-            key_fn=lambda x: x.get("name") or "",
-            eq_fn=lambda s, t: (
-                s.get("event") == t.get("event")
-                and s.get("timing") == t.get("timing")
-            ),
-            detail_fn=lambda x: {"event": x.get("event"), "timing": x.get("timing"), "enabled": x.get("enabled")},
-        )
+        trig_diff = self._compare_triggers(source_meta["triggers"], target_meta["triggers"])
+        src_trig_err = source_meta.get("trigger_error")
+        tgt_trig_err = target_meta.get("trigger_error")
+        if src_trig_err or tgt_trig_err:
+            trig_diff["load_error"] = {
+                "source": src_trig_err,
+                "target": tgt_trig_err,
+            }
 
         same = all([
             cols_diff["same"],
@@ -286,17 +284,24 @@ class SchemaCompareService:
                 tgt_type = str(tgt.get("type", ""))
                 src_null = src.get("nullable", True)
                 tgt_null = tgt.get("nullable", True)
-                is_eq = src_type == tgt_type and src_null == tgt_null
-                status = "same" if is_eq else "different"
+                src_def = str(src["default"]) if src.get("default") is not None else None
+                tgt_def = str(tgt["default"]) if tgt.get("default") is not None else None
+                diff_fields = []
+                if src_type != tgt_type:
+                    diff_fields.append("type")
+                if src_null != tgt_null:
+                    diff_fields.append("nullable")
+                if src_def != tgt_def:
+                    diff_fields.append("default")
+                is_eq = not diff_fields
                 if not is_eq:
                     same = False
                 items.append({
                     "name": name,
-                    "source": {"type": src_type, "nullable": src_null,
-                               "default": str(src["default"]) if src.get("default") is not None else None},
-                    "target": {"type": tgt_type, "nullable": tgt_null,
-                               "default": str(tgt["default"]) if tgt.get("default") is not None else None},
-                    "status": status,
+                    "source": {"type": src_type, "nullable": src_null, "default": src_def},
+                    "target": {"type": tgt_type, "nullable": tgt_null, "default": tgt_def},
+                    "status": "same" if is_eq else "different",
+                    "diff_fields": diff_fields,
                 })
             elif src:
                 same = False
@@ -306,6 +311,7 @@ class SchemaCompareService:
                                "default": str(src["default"]) if src.get("default") is not None else None},
                     "target": None,
                     "status": "missing_in_target",
+                    "diff_fields": [],
                 })
             else:
                 same = False
@@ -315,6 +321,7 @@ class SchemaCompareService:
                     "target": {"type": str(tgt.get("type", "")), "nullable": tgt.get("nullable", True),
                                "default": str(tgt["default"]) if tgt.get("default") is not None else None},
                     "status": "extra_in_target",
+                    "diff_fields": [],
                 })
         return {"items": items, "same": same}
 
@@ -431,6 +438,58 @@ class SchemaCompareService:
                 items.append({"name": key, "source": None, "target": detail_fn(tgt), "status": "extra_in_target"})
         return {"items": items, "same": same}
 
+    @staticmethod
+    def _compare_triggers(source_trigs: list, target_trigs: list) -> dict[str, Any]:
+        """Compare triggers field-by-field: presence, event, timing, enabled, body."""
+        def _detail(t: dict) -> dict:
+            return {
+                "event":   t.get("event"),
+                "timing":  t.get("timing"),
+                "enabled": t.get("enabled"),
+                "body":    t.get("body"),
+            }
+
+        src_by_name = {t["name"]: t for t in source_trigs if t.get("name")}
+        tgt_by_name = {t["name"]: t for t in target_trigs if t.get("name")}
+        all_names = sorted(set(src_by_name) | set(tgt_by_name))
+        items: list[dict[str, Any]] = []
+        same = True
+
+        for name in all_names:
+            src = src_by_name.get(name)
+            tgt = tgt_by_name.get(name)
+            if src and tgt:
+                diff_fields: list[str] = []
+                if src.get("event")   != tgt.get("event"):
+                    diff_fields.append("event")
+                if src.get("timing")  != tgt.get("timing"):
+                    diff_fields.append("timing")
+                if src.get("enabled") != tgt.get("enabled"):
+                    diff_fields.append("enabled")
+                src_body = (src.get("body") or "").strip()
+                tgt_body = (tgt.get("body") or "").strip()
+                if src_body != tgt_body:
+                    diff_fields.append("body")
+                if diff_fields:
+                    same = False
+                items.append({
+                    "name": name,
+                    "source": _detail(src),
+                    "target": _detail(tgt),
+                    "status": "same" if not diff_fields else "different",
+                    "diff_fields": diff_fields,
+                })
+            elif src:
+                same = False
+                items.append({"name": name, "source": _detail(src), "target": None,
+                               "status": "missing_in_target", "diff_fields": []})
+            else:
+                same = False
+                items.append({"name": name, "source": None, "target": _detail(tgt),
+                               "status": "extra_in_target", "diff_fields": []})
+
+        return {"items": items, "same": same}
+
     # ── DB introspection ──────────────────────────────────────────────────────
 
     @staticmethod
@@ -486,7 +545,10 @@ class SchemaCompareService:
             except Exception:
                 check_constraints = []
 
-            triggers = SchemaCompareService._load_triggers(engine, schema, table, is_oracle)
+            try:
+                triggers, trigger_error = SchemaCompareService._load_triggers(engine, schema, table, is_oracle)
+            except Exception as exc:
+                triggers, trigger_error = [], str(exc)
 
             return {
                 "columns": columns,
@@ -496,40 +558,59 @@ class SchemaCompareService:
                 "unique_constraints": unique_constraints,
                 "check_constraints": check_constraints,
                 "triggers": triggers,
+                "trigger_error": trigger_error,
             }
         finally:
             engine.dispose()
 
     @staticmethod
-    def _load_triggers(engine: Any, schema: str, table: str, is_oracle: bool) -> list[dict[str, Any]]:
-        try:
-            if is_oracle:
-                sql = text("""
-                    SELECT trigger_name AS name,
-                           triggering_event AS event,
-                           trigger_type AS timing,
-                           status AS enabled
-                    FROM all_triggers
-                    WHERE owner = :schema AND table_name = :table
-                """)
-                params = {"schema": schema.upper(), "table": table.upper()}
-            else:
-                sql = text("""
-                    SELECT trigger_name AS name,
-                           string_agg(event_manipulation, ', ') AS event,
-                           action_timing AS timing,
-                           'ENABLED' AS enabled
-                    FROM information_schema.triggers
-                    WHERE trigger_schema = :schema AND event_object_table = :table
-                    GROUP BY trigger_name, action_timing
-                """)
-                params = {"schema": schema, "table": table}
+    def _load_triggers(engine: Any, schema: str, table: str, is_oracle: bool) -> tuple[list[dict[str, Any]], str | None]:
+        if is_oracle:
+            sql = text("""
+                SELECT trigger_name  AS name,
+                       triggering_event AS event,
+                       trigger_type  AS timing,
+                       status        AS enabled,
+                       trigger_body  AS body
+                FROM all_triggers
+                WHERE owner = :schema AND table_name = :table
+            """)
+            params = {"schema": schema.upper(), "table": table.upper()}
+        else:
+            # pg_trigger is more reliable than information_schema.triggers:
+            # information_schema.triggers only shows triggers on tables owned by current user.
+            sql = text("""
+                SELECT t.tgname AS name,
+                       array_to_string(
+                           ARRAY[
+                               CASE WHEN (t.tgtype::integer & 4)  > 0 THEN 'INSERT'   END,
+                               CASE WHEN (t.tgtype::integer & 8)  > 0 THEN 'DELETE'   END,
+                               CASE WHEN (t.tgtype::integer & 16) > 0 THEN 'UPDATE'   END,
+                               CASE WHEN (t.tgtype::integer & 32) > 0 THEN 'TRUNCATE' END
+                           ]::text[],
+                           ', '
+                       ) AS event,
+                       CASE
+                           WHEN (t.tgtype::integer & 64) > 0 THEN 'INSTEAD OF'
+                           WHEN (t.tgtype::integer & 2)  > 0 THEN 'BEFORE'
+                           ELSE 'AFTER'
+                       END AS timing,
+                       CASE WHEN t.tgenabled = 'D' THEN 'DISABLED' ELSE 'ENABLED' END AS enabled,
+                       p.prosrc AS body
+                FROM pg_trigger t
+                JOIN pg_class c     ON c.oid = t.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_proc p      ON p.oid = t.tgfoid
+                WHERE n.nspname = :schema
+                  AND c.relname  = :table
+                  AND NOT t.tgisinternal
+                ORDER BY t.tgname
+            """)
+            params = {"schema": schema, "table": table}
 
-            with engine.connect() as conn:
-                rows = conn.execute(sql, params).mappings().all()
-                return [dict(r) for r in rows]
-        except Exception:
-            return []
+        with engine.connect() as conn:
+            rows = conn.execute(sql, params).mappings().all()
+            return [dict(r) for r in rows], None
 
     @staticmethod
     def _load_columns(database_url: str, schema: str, table: str) -> list[dict[str, Any]]:

@@ -132,6 +132,19 @@
 .diff-info-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
 .diff-info-row span { color: var(--muted); }
 .diff-info-row strong { color: var(--text); }
+
+.diff-field-tag {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fcd34d;
+    vertical-align: middle;
+}
 </style>
 <script>
 const PAGE_SIZE_KEY = "schema_page_size";
@@ -315,6 +328,7 @@ function statusBadge(status) {
 
 function sectionBadge(section) {
     if (!section) return '<span class="diff-badge empty">нет данных</span>';
+    if (section.load_error) return '<span class="diff-badge warn" style="background:#fee2e2;color:#b91c1c">ошибка загрузки</span>';
     if (section.same) return '<span class="diff-badge ok">совпадает</span>';
     return '<span class="diff-badge warn">есть различия</span>';
 }
@@ -328,6 +342,8 @@ function renderColumnsTable(cols) {
             : item.status === "different" ? "diff-row-different"
             : item.status === "missing_in_target" ? "diff-row-missing"
             : "diff-row-extra";
+        const fld = item.diff_fields || [];
+        const hi = (f) => fld.includes(f) ? ' style="font-weight:700;color:#92400e"' : "";
         const srcType = item.source ? esc(item.source.type) : '<span class="cell-missing">—</span>';
         const tgtType = item.target ? esc(item.target.type) : '<span class="cell-missing">—</span>';
         const srcNull = item.source ? (item.source.nullable ? "null" : "not null") : "—";
@@ -336,10 +352,10 @@ function renderColumnsTable(cols) {
         const tgtDef  = item.target && item.target.default != null ? esc(item.target.default) : "—";
         return `<tr class="${cls}">
             <td class="col-name">${esc(item.name)}</td>
-            <td>${srcType}</td><td>${tgtType}</td>
-            <td>${srcNull}</td><td>${tgtNull}</td>
-            <td>${srcDef}</td><td>${tgtDef}</td>
-            <td>${statusBadge(item.status)}</td>
+            <td${hi("type")}>${srcType}</td><td${hi("type")}>${tgtType}</td>
+            <td${hi("nullable")}>${srcNull}</td><td${hi("nullable")}>${tgtNull}</td>
+            <td${hi("default")}>${srcDef}</td><td${hi("default")}>${tgtDef}</td>
+            <td>${statusBadge(item.status)}${diffFieldTags(fld)}</td>
         </tr>`;
     }).join("");
     return `<table class="diff-table">
@@ -428,8 +444,21 @@ function renderFKsTable(fks) {
     </table>`;
 }
 
+function diffFieldTags(fields) {
+    if (!fields || !fields.length) return "";
+    const labels = {type: "тип", nullable: "null", "default": "default",
+                    event: "событие", timing: "timing", enabled: "статус", body: "тело"};
+    return fields.map(f => `<span class="diff-field-tag">${labels[f] || esc(f)}</span>`).join(" ");
+}
+
 function renderNamedTable(section, colLabel, detailFn) {
-    if (!section || !section.items || !section.items.length) {
+    if (!section) return '<span class="cell-missing">нет данных</span>';
+    if (section.load_error) {
+        const srcErr = section.load_error.source ? `src: ${esc(section.load_error.source)}` : "";
+        const tgtErr = section.load_error.target ? `tgt: ${esc(section.load_error.target)}` : "";
+        return `<div style="color:var(--danger);font-size:12px;font-family:monospace">Ошибка загрузки: ${[srcErr,tgtErr].filter(Boolean).join(" | ")}</div>`;
+    }
+    if (!section.items || !section.items.length) {
         return '<span class="cell-missing">нет</span>';
     }
     const rows = section.items.map(item => {
@@ -439,11 +468,12 @@ function renderNamedTable(section, colLabel, detailFn) {
             : "diff-row-different";
         const srcDetail = item.source ? esc(detailFn(item.source)) : '<span class="cell-missing">—</span>';
         const tgtDetail = item.target ? esc(detailFn(item.target)) : '<span class="cell-missing">—</span>';
+        const tags = diffFieldTags(item.diff_fields);
         return `<tr class="${cls}">
             <td class="col-name">${esc(item.name)}</td>
             <td>${srcDetail}</td>
             <td>${tgtDetail}</td>
-            <td>${statusBadge(item.status)}</td>
+            <td>${statusBadge(item.status)}${tags ? " " + tags : ""}</td>
         </tr>`;
     }).join("");
     return `<table class="diff-table">
@@ -452,6 +482,69 @@ function renderNamedTable(section, colLabel, detailFn) {
         </tr></thead>
         <tbody>${rows}</tbody>
     </table>`;
+}
+
+function renderTriggersTable(section) {
+    if (!section) return '<span class="cell-missing">нет данных</span>';
+    if (section.load_error) {
+        const srcErr = section.load_error.source ? `src: ${esc(section.load_error.source)}` : "";
+        const tgtErr = section.load_error.target ? `tgt: ${esc(section.load_error.target)}` : "";
+        return `<div style="color:var(--danger);font-size:12px;font-family:monospace">Ошибка загрузки: ${[srcErr,tgtErr].filter(Boolean).join(" | ")}</div>`;
+    }
+    if (!section.items || !section.items.length) {
+        return '<span class="cell-missing">нет</span>';
+    }
+    const rows = section.items.map(item => {
+        const cls = item.status === "same" ? "diff-row-same"
+            : item.status === "missing_in_target" ? "diff-row-missing"
+            : item.status === "extra_in_target" ? "diff-row-extra"
+            : "diff-row-different";
+        const fld = item.diff_fields || [];
+        const hi = (f) => fld.includes(f) ? ' style="font-weight:700;color:#92400e"' : "";
+        const cellVal = (d, f) => d ? esc(d[f] || "—") : '<span class="cell-missing">—</span>';
+        const bodyDiff = fld.includes("body") ? renderBodyDiff(item.source?.body, item.target?.body) : "";
+        return `<tr class="${cls}">
+            <td class="col-name">${esc(item.name)}</td>
+            <td${hi("event")}>${cellVal(item.source, "event")}</td>
+            <td${hi("event")}>${cellVal(item.target, "event")}</td>
+            <td${hi("timing")}>${cellVal(item.source, "timing")}</td>
+            <td${hi("timing")}>${cellVal(item.target, "timing")}</td>
+            <td${hi("enabled")}>${cellVal(item.source, "enabled")}</td>
+            <td${hi("enabled")}>${cellVal(item.target, "enabled")}</td>
+            <td>${statusBadge(item.status)}${diffFieldTags(fld)}</td>
+        </tr>${bodyDiff}`;
+    }).join("");
+    return `<table class="diff-table">
+        <thead><tr>
+            <th>Триггер</th>
+            <th>Событие (src)</th><th>Событие (tgt)</th>
+            <th>Timing (src)</th><th>Timing (tgt)</th>
+            <th>Статус (src)</th><th>Статус (tgt)</th>
+            <th>Различия</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderBodyDiff(srcBody, tgtBody) {
+    if (!srcBody && !tgtBody) return "";
+    return `<tr class="diff-row-different">
+        <td colspan="8" style="padding:6px 8px">
+            <details style="font-size:12px">
+                <summary style="cursor:pointer;color:var(--warning);font-weight:600">▶ тело триггера отличается</summary>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+                    <div>
+                        <div style="font-size:11px;color:var(--muted);margin-bottom:2px">Source</div>
+                        <pre style="margin:0;white-space:pre-wrap;background:var(--surface-soft);padding:6px;border-radius:4px;border:1px solid var(--border)">${esc(srcBody || "—")}</pre>
+                    </div>
+                    <div>
+                        <div style="font-size:11px;color:var(--muted);margin-bottom:2px">Target</div>
+                        <pre style="margin:0;white-space:pre-wrap;background:var(--surface-soft);padding:6px;border-radius:4px;border:1px solid var(--border)">${esc(tgtBody || "—")}</pre>
+                    </div>
+                </div>
+            </details>
+        </td>
+    </tr>`;
 }
 
 function renderDetails(d) {
@@ -465,7 +558,7 @@ function renderDetails(d) {
         {key: "foreign_keys",       title: "Foreign Keys",           render: () => renderFKsTable(diff.foreign_keys)},
         {key: "unique_constraints", title: "Unique Constraints",     render: () => renderNamedTable(diff.unique_constraints, "Колонки", s => (s.columns || []).join(", "))},
         {key: "check_constraints",  title: "Check Constraints",      render: () => renderNamedTable(diff.check_constraints, "Выражение", s => s.sqltext || "")},
-        {key: "triggers",           title: "Триггеры",               render: () => renderNamedTable(diff.triggers, "Событие / Timing", s => [s.event, s.timing].filter(Boolean).join(" / "))},
+        {key: "triggers",           title: "Триггеры",               render: () => renderTriggersTable(diff.triggers)},
     ];
 
     const sectHtml = sections.map(({key, title, render}) => {
