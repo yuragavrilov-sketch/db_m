@@ -74,77 +74,116 @@
 <style>
 /* ── Details panel ── */
 .diff-details { font-size: 13px; padding: 12px 16px; }
-.diff-section { margin-bottom: 16px; }
-.diff-section-title {
+
+/* Summary chips bar */
+.diff-summary-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.diff-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    border: 1px solid transparent;
+}
+.diff-chip-ok    { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.diff-chip-warn  { background: #fef9c3; color: #854d0e; border-color: #fde68a; }
+.diff-chip-error { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.diff-chip-empty { background: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }
+
+/* Collapsible sections */
+.diff-section {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.diff-section summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 7px 12px;
+    background: var(--surface-soft);
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-weight: 600;
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--muted);
-    margin: 0 0 6px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    user-select: none;
 }
-.diff-section-title .diff-badge {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 1px 7px;
-    border-radius: 999px;
-    text-transform: none;
-    letter-spacing: 0;
+.diff-section summary::-webkit-details-marker { display: none; }
+.diff-section summary::before {
+    content: "▶";
+    font-size: 9px;
+    color: var(--muted);
+    transition: transform 0.15s;
+    flex-shrink: 0;
 }
-.diff-badge.ok   { background: #dcfce7; color: #15803d; }
-.diff-badge.warn { background: #fef9c3; color: #92400e; }
+.diff-section[open] summary::before { transform: rotate(90deg); }
+.diff-section-body { padding: 8px; overflow-x: auto; }
+
+.diff-badge {
+    font-size: 11px; font-weight: 600; padding: 1px 7px;
+    border-radius: 999px; text-transform: none; letter-spacing: 0;
+}
+.diff-badge.ok    { background: #dcfce7; color: #15803d; }
+.diff-badge.warn  { background: #fef9c3; color: #92400e; }
+.diff-badge.error { background: #fee2e2; color: #b91c1c; }
 .diff-badge.empty { background: #f1f5f9; color: #94a3b8; }
 
+/* Tables */
 .diff-table { width: 100%; border-collapse: collapse; }
 .diff-table th, .diff-table td {
     padding: 4px 8px;
     text-align: left;
     border-bottom: 1px solid var(--border);
-    vertical-align: top;
+    vertical-align: middle;
     white-space: nowrap;
 }
 .diff-table th { font-weight: 600; font-size: 11px; color: var(--muted); background: var(--surface-soft); }
 .diff-table td { font-family: monospace; font-size: 12px; }
-.diff-table .col-name { font-weight: 600; color: var(--text); }
-.diff-table .cell-missing { color: #94a3b8; }
+.diff-table .col-name { font-weight: 600; color: var(--text); font-family: monospace; }
+.diff-table .cell-missing { color: #94a3b8; font-style: italic; }
 
-/* row status colours */
+/* Row colours */
 .diff-row-same      { }
+.diff-row-same.is-hidden { display: none; }
 .diff-row-different { background: #fffbeb; }
 .diff-row-missing   { background: #fef2f2; }
 .diff-row-extra     { background: #f0fdf4; }
 
-/* inline status badge inside diff table */
+/* Inline status badges */
 .ds { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 .ds-same      { background:#dcfce7; color:#15803d; }
 .ds-different { background:#fef9c3; color:#854d0e; }
 .ds-missing   { background:#fee2e2; color:#b91c1c; }
 .ds-extra     { background:#dcfce7; color:#166534; }
 
+/* Diff field tags */
+.diff-field-tag {
+    display: inline-block; margin-left: 3px;
+    padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; font-weight: 600;
+    background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+    vertical-align: middle; font-family: sans-serif;
+}
+
+/* PK inline */
 .diff-pk-row { display: flex; gap: 24px; flex-wrap: wrap; margin: 4px 0; }
 .diff-pk-col { flex: 1; min-width: 160px; }
 .diff-pk-col label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 2px; }
 .diff-pk-val { font-family: monospace; font-size: 12px; }
 
+/* Header info row */
 .diff-info-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
 .diff-info-row span { color: var(--muted); }
 .diff-info-row strong { color: var(--text); }
 
-.diff-field-tag {
-    display: inline-block;
-    margin-left: 4px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-weight: 600;
-    background: #fef3c7;
-    color: #92400e;
-    border: 1px solid #fcd34d;
-    vertical-align: middle;
+/* Toggle same rows */
+.diff-toggle-same {
+    font-size: 11px; color: var(--muted); cursor: pointer;
+    border: none; background: none; padding: 0 0 6px;
+    text-decoration: underline dotted;
 }
+.diff-toggle-same:hover { color: var(--primary); }
 </style>
 <script>
 const PAGE_SIZE_KEY = "schema_page_size";
@@ -328,17 +367,34 @@ function statusBadge(status) {
 
 function sectionBadge(section) {
     if (!section) return '<span class="diff-badge empty">нет данных</span>';
-    if (section.load_error) return '<span class="diff-badge warn" style="background:#fee2e2;color:#b91c1c">ошибка загрузки</span>';
+    if (section.load_error) return '<span class="diff-badge error">ошибка загрузки</span>';
     if (section.same) return '<span class="diff-badge ok">совпадает</span>';
     return '<span class="diff-badge warn">есть различия</span>';
+}
+
+function makeToggleSame(tableId) {
+    return `<button class="diff-toggle-same" onclick="toggleSameRows('${tableId}')">скрыть совпадающие</button>`;
+}
+
+function toggleSameRows(tableId) {
+    const tbl = document.getElementById(tableId);
+    if (!tbl) return;
+    const btn = tbl.previousElementSibling;
+    const rows = tbl.querySelectorAll("tr.diff-row-same");
+    const hidden = rows.length && rows[0].classList.contains("is-hidden");
+    rows.forEach(r => r.classList.toggle("is-hidden", !hidden));
+    if (btn) btn.textContent = hidden ? "скрыть совпадающие" : "показать совпадающие";
 }
 
 function renderColumnsTable(cols) {
     if (!cols || !cols.items || !cols.items.length) {
         return '<span class="cell-missing">нет колонок</span>';
     }
+    const hasDiffs = cols.items.some(i => i.status !== "same");
+    const tableId = "tbl-cols-" + Math.random().toString(36).slice(2);
     const rows = cols.items.map(item => {
-        const cls = item.status === "same" ? "diff-row-same"
+        const isSame = item.status === "same";
+        const cls = isSame ? "diff-row-same" + (hasDiffs ? " is-hidden" : "")
             : item.status === "different" ? "diff-row-different"
             : item.status === "missing_in_target" ? "diff-row-missing"
             : "diff-row-extra";
@@ -358,7 +414,8 @@ function renderColumnsTable(cols) {
             <td>${statusBadge(item.status)}${diffFieldTags(fld)}</td>
         </tr>`;
     }).join("");
-    return `<table class="diff-table">
+    const toggle = hasDiffs ? makeToggleSame(tableId) : "";
+    return `${toggle}<table class="diff-table" id="${tableId}">
         <thead><tr>
             <th>Колонка</th>
             <th>Тип (src)</th><th>Тип (tgt)</th>
@@ -447,8 +504,8 @@ function renderFKsTable(fks) {
 function diffFieldTags(fields) {
     if (!fields || !fields.length) return "";
     const labels = {type: "тип", nullable: "null", "default": "default",
-                    event: "событие", timing: "timing", enabled: "статус", body: "тело"};
-    return fields.map(f => `<span class="diff-field-tag">${labels[f] || esc(f)}</span>`).join(" ");
+                    event: "событие", timing: "timing", enabled: "enabled", body: "тело"};
+    return " " + fields.map(f => `<span class="diff-field-tag">${labels[f] || esc(f)}</span>`).join(" ");
 }
 
 function renderNamedTable(section, colLabel, detailFn) {
@@ -489,38 +546,50 @@ function renderTriggersTable(section) {
     if (section.load_error) {
         const srcErr = section.load_error.source ? `src: ${esc(section.load_error.source)}` : "";
         const tgtErr = section.load_error.target ? `tgt: ${esc(section.load_error.target)}` : "";
-        return `<div style="color:var(--danger);font-size:12px;font-family:monospace">Ошибка загрузки: ${[srcErr,tgtErr].filter(Boolean).join(" | ")}</div>`;
+        return `<div style="color:var(--danger);font-size:12px;font-family:monospace;padding:4px 0">Ошибка загрузки: ${[srcErr,tgtErr].filter(Boolean).join(" | ")}</div>`;
     }
     if (!section.items || !section.items.length) {
-        return '<span class="cell-missing">нет</span>';
+        return '<span class="cell-missing">нет триггеров</span>';
     }
+    const hasDiffs = section.items.some(i => i.status !== "same");
+    const tableId = "tbl-trg-" + Math.random().toString(36).slice(2);
     const rows = section.items.map(item => {
-        const cls = item.status === "same" ? "diff-row-same"
+        const isSame = item.status === "same";
+        const cls = isSame ? "diff-row-same" + (hasDiffs ? " is-hidden" : "")
             : item.status === "missing_in_target" ? "diff-row-missing"
             : item.status === "extra_in_target" ? "diff-row-extra"
             : "diff-row-different";
         const fld = item.diff_fields || [];
         const hi = (f) => fld.includes(f) ? ' style="font-weight:700;color:#92400e"' : "";
-        const cellVal = (d, f) => d ? esc(d[f] || "—") : '<span class="cell-missing">—</span>';
-        const bodyDiff = fld.includes("body") ? renderBodyDiff(item.source?.body, item.target?.body) : "";
+        const val = (d, f) => d ? esc(d[f] || "—") : '<span class="cell-missing">—</span>';
+        // enabled: show as icon for clarity
+        const fmtEnabled = (d) => {
+            if (!d) return '<span class="cell-missing">—</span>';
+            const v = (d.enabled || "").toUpperCase();
+            if (v === "ENABLED")  return '<span style="color:#15803d;font-weight:600">✓ вкл</span>';
+            if (v === "DISABLED") return '<span style="color:#b91c1c;font-weight:600">✗ выкл</span>';
+            return esc(d.enabled || "—");
+        };
+        const bodyRow = fld.includes("body") ? renderBodyDiff(item.source?.body, item.target?.body) : "";
         return `<tr class="${cls}">
             <td class="col-name">${esc(item.name)}</td>
-            <td${hi("event")}>${cellVal(item.source, "event")}</td>
-            <td${hi("event")}>${cellVal(item.target, "event")}</td>
-            <td${hi("timing")}>${cellVal(item.source, "timing")}</td>
-            <td${hi("timing")}>${cellVal(item.target, "timing")}</td>
-            <td${hi("enabled")}>${cellVal(item.source, "enabled")}</td>
-            <td${hi("enabled")}>${cellVal(item.target, "enabled")}</td>
+            <td${hi("event")}>${val(item.source, "event")}</td>
+            <td${hi("event")}>${val(item.target, "event")}</td>
+            <td${hi("timing")}>${val(item.source, "timing")}</td>
+            <td${hi("timing")}>${val(item.target, "timing")}</td>
+            <td${hi("enabled")}>${fmtEnabled(item.source)}</td>
+            <td${hi("enabled")}>${fmtEnabled(item.target)}</td>
             <td>${statusBadge(item.status)}${diffFieldTags(fld)}</td>
-        </tr>${bodyDiff}`;
+        </tr>${bodyRow}`;
     }).join("");
-    return `<table class="diff-table">
+    const toggle = hasDiffs ? makeToggleSame(tableId) : "";
+    return `${toggle}<table class="diff-table" id="${tableId}">
         <thead><tr>
             <th>Триггер</th>
             <th>Событие (src)</th><th>Событие (tgt)</th>
             <th>Timing (src)</th><th>Timing (tgt)</th>
-            <th>Статус (src)</th><th>Статус (tgt)</th>
-            <th>Различия</th>
+            <th>Активен (src)</th><th>Активен (tgt)</th>
+            <th>Статус / Различия</th>
         </tr></thead>
         <tbody>${rows}</tbody>
     </table>`;
@@ -529,17 +598,19 @@ function renderTriggersTable(section) {
 function renderBodyDiff(srcBody, tgtBody) {
     if (!srcBody && !tgtBody) return "";
     return `<tr class="diff-row-different">
-        <td colspan="8" style="padding:6px 8px">
-            <details style="font-size:12px">
-                <summary style="cursor:pointer;color:var(--warning);font-weight:600">▶ тело триггера отличается</summary>
+        <td colspan="8" style="padding:4px 8px 8px;white-space:normal">
+            <details>
+                <summary style="cursor:pointer;color:var(--warning);font-weight:600;font-size:12px;list-style:none;padding:2px 0">
+                    ▶ тело триггера отличается — нажмите для сравнения
+                </summary>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
                     <div>
-                        <div style="font-size:11px;color:var(--muted);margin-bottom:2px">Source</div>
-                        <pre style="margin:0;white-space:pre-wrap;background:var(--surface-soft);padding:6px;border-radius:4px;border:1px solid var(--border)">${esc(srcBody || "—")}</pre>
+                        <div style="font-size:11px;color:var(--muted);margin-bottom:3px;font-family:sans-serif">Source</div>
+                        <pre style="margin:0;white-space:pre-wrap;overflow-x:auto;background:var(--surface-soft);padding:8px;border-radius:4px;border:1px solid var(--border);font-size:11px;max-height:300px">${esc(srcBody || "—")}</pre>
                     </div>
                     <div>
-                        <div style="font-size:11px;color:var(--muted);margin-bottom:2px">Target</div>
-                        <pre style="margin:0;white-space:pre-wrap;background:var(--surface-soft);padding:6px;border-radius:4px;border:1px solid var(--border)">${esc(tgtBody || "—")}</pre>
+                        <div style="font-size:11px;color:var(--muted);margin-bottom:3px;font-family:sans-serif">Target</div>
+                        <pre style="margin:0;white-space:pre-wrap;overflow-x:auto;background:var(--surface-soft);padding:8px;border-radius:4px;border:1px solid var(--border);font-size:11px;max-height:300px">${esc(tgtBody || "—")}</pre>
                     </div>
                 </div>
             </details>
@@ -552,37 +623,53 @@ function renderDetails(d) {
     const job  = d.last_job;
 
     const sections = [
-        {key: "columns",            title: "Колонки",                render: () => renderColumnsTable(diff.columns)},
-        {key: "indexes",            title: "Индексы",                render: () => renderIndexesTable(diff.indexes)},
-        {key: "primary_key",        title: "Primary Key",            render: () => renderPK(diff.primary_key)},
-        {key: "foreign_keys",       title: "Foreign Keys",           render: () => renderFKsTable(diff.foreign_keys)},
-        {key: "unique_constraints", title: "Unique Constraints",     render: () => renderNamedTable(diff.unique_constraints, "Колонки", s => (s.columns || []).join(", "))},
-        {key: "check_constraints",  title: "Check Constraints",      render: () => renderNamedTable(diff.check_constraints, "Выражение", s => s.sqltext || "")},
-        {key: "triggers",           title: "Триггеры",               render: () => renderTriggersTable(diff.triggers)},
+        {key: "columns",            title: "Колонки",            short: "Колонки",  render: () => renderColumnsTable(diff.columns)},
+        {key: "indexes",            title: "Индексы",            short: "Индексы",  render: () => renderIndexesTable(diff.indexes)},
+        {key: "primary_key",        title: "Primary Key",        short: "PK",       render: () => renderPK(diff.primary_key)},
+        {key: "foreign_keys",       title: "Foreign Keys",       short: "FK",       render: () => renderFKsTable(diff.foreign_keys)},
+        {key: "unique_constraints", title: "Unique Constraints", short: "UQ",       render: () => renderNamedTable(diff.unique_constraints, "Колонки", s => (s.columns || []).join(", "))},
+        {key: "check_constraints",  title: "Check Constraints",  short: "CK",       render: () => renderNamedTable(diff.check_constraints, "Выражение", s => s.sqltext || "")},
+        {key: "triggers",           title: "Триггеры",           short: "Триггеры", render: () => renderTriggersTable(diff.triggers)},
     ];
 
-    const sectHtml = sections.map(({key, title, render}) => {
+    // Summary chips — overview of all categories
+    const summaryChips = sections.map(({key, short}) => {
         const sec = diff[key];
-        return `<div class="diff-section">
-            <div class="diff-section-title">${esc(title)} ${sectionBadge(sec)}</div>
-            ${render()}
-        </div>`;
+        if (!sec && key !== "primary_key") return `<span class="diff-chip diff-chip-empty">${esc(short)}</span>`;
+        if (sec && sec.load_error) return `<span class="diff-chip diff-chip-error">⚠ ${esc(short)}</span>`;
+        if (!sec || sec.same === undefined) return `<span class="diff-chip diff-chip-empty">${esc(short)}</span>`;
+        if (sec.same) return `<span class="diff-chip diff-chip-ok">✓ ${esc(short)}</span>`;
+        const diffCount = (sec.items || []).filter(i => i.status !== "same").length;
+        const cnt = diffCount ? ` (${diffCount})` : "";
+        return `<span class="diff-chip diff-chip-warn">✗ ${esc(short)}${cnt}</span>`;
     }).join("");
 
+    // Collapsible sections: open if has diffs or errors, collapsed if same
+    const sectHtml = sections.map(({key, title, render}) => {
+        const sec = diff[key];
+        const hasDiff = sec && (!sec.same || sec.load_error);
+        return `<details class="diff-section" ${hasDiff ? "open" : ""}>
+            <summary>${esc(title)} ${sectionBadge(sec)}</summary>
+            <div class="diff-section-body">${render()}</div>
+        </details>`;
+    }).join("");
+
+    // Job info
     let jobHtml = "";
     if (job) {
         const jobStatus = job.status || "?";
         const jobBadgeCls = jobStatus === "success" ? "badge-same" : jobStatus === "failed" ? "badge-missing" : "badge-unknown";
-        jobHtml = `<div class="diff-section">
-            <div class="diff-section-title">Последний Job</div>
-            <div class="diff-info-row">
-                <span>ID: <strong>${esc(job.id)}</strong></span>
-                <span>Статус: <strong><span class="badge ${jobBadgeCls}">${esc(jobStatus)}</span></strong></span>
-                <span>Запущен: <strong>${fmtDate(job.requested_at)}</strong></span>
-                <span>Завершён: <strong>${fmtDate(job.finished_at)}</strong></span>
+        jobHtml = `<details class="diff-section">
+            <summary>Последний Job <span class="badge ${jobBadgeCls}" style="text-transform:none;font-size:11px">${esc(jobStatus)}</span></summary>
+            <div class="diff-section-body">
+                <div class="diff-info-row">
+                    <span>ID: <strong>${esc(job.id)}</strong></span>
+                    <span>Запущен: <strong>${fmtDate(job.requested_at)}</strong></span>
+                    <span>Завершён: <strong>${fmtDate(job.finished_at)}</strong></span>
+                </div>
+                ${job.error_text ? `<div style="color:var(--danger);font-size:12px;font-family:monospace;margin-top:4px">${esc(job.error_text)}</div>` : ""}
             </div>
-            ${job.error_text ? `<div style="color:var(--danger);font-size:12px;font-family:monospace">${esc(job.error_text)}</div>` : ""}
-        </div>`;
+        </details>`;
     }
 
     const overallBadge = diff.same === true ? '<span class="badge badge-same">Одинаковые</span>'
@@ -590,12 +677,13 @@ function renderDetails(d) {
         : '<span class="badge badge-unknown">Не сравнивалось</span>';
 
     return `<div class="diff-details">
-        <div class="diff-info-row" style="margin-bottom:12px">
+        <div class="diff-info-row">
             <span>Source: <strong>${esc(d.source_schema)}.${esc(d.source_table)}</strong></span>
             <span>Target: <strong>${esc(d.target_schema || "—")}.${esc(d.target_table || "—")}</strong></span>
-            <span>Результат: ${overallBadge}</span>
+            <span>Итог: ${overallBadge}</span>
             <span>Сравнение: <strong>${fmtDate(d.last_compared_at)}</strong></span>
         </div>
+        <div class="diff-summary-bar">${summaryChips}</div>
         ${sectHtml}
         ${jobHtml}
     </div>`;
