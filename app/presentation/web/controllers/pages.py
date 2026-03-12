@@ -45,16 +45,15 @@ def _conn_summary(settings: dict) -> str:
 @pages_bp.get("/config")
 def config_tab():
     configs = config_service.list_configs()
-    grouped: dict[str, list[dict]] = {t.value: [] for t in ConfigType}
     for item in configs:
         item["conn_summary"] = _conn_summary(item["settings"])
-        grouped[item["config_type"]].append(item)
+        item["type_label"] = _CONFIG_TYPE_LABELS.get(item["config_type"], item["config_type"])
 
     return render_template(
         "tabs/config.html",
         config_types=[t.value for t in ConfigType],
         config_type_labels=_CONFIG_TYPE_LABELS,
-        grouped_configs=grouped,
+        all_configs=configs,
     )
 
 

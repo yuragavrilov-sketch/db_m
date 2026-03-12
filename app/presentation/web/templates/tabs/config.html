@@ -33,22 +33,22 @@
 <section class="panel">
     <div class="panel-header">
         <h2>Список конфигураций</h2>
-        <p class="panel-subtitle">Управление активными и доступными профилями подключений</p>
+        <p class="panel-subtitle">Управление профилями подключений</p>
     </div>
-    {% for t in config_types %}
-    <h3 class="section-title">{{ config_type_labels[t] }}</h3>
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
+                    <th>Тип</th>
                     <th>Название</th>
                     <th>Подключение</th>
                     <th>Включена</th>
                 </tr>
             </thead>
             <tbody>
-            {% for cfg in grouped_configs[t] %}
+            {% for cfg in all_configs %}
                 <tr>
+                    <td><span class="text-muted">{{ cfg.type_label }}</span></td>
                     <td>
                         <strong>{{ cfg.name }}</strong>
                         {% if cfg.description %}
@@ -65,7 +65,7 @@
                     </td>
                 </tr>
                 <tr class="edit-row">
-                    <td colspan="3">
+                    <td colspan="4">
                         <details>
                             <summary>Редактировать: {{ cfg.name }}</summary>
                             <form class="form-grid form-inline js-update-form"
@@ -95,12 +95,11 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="3" class="text-muted">Нет конфигураций этого типа</td></tr>
+                <tr><td colspan="4" class="text-muted">Нет конфигураций</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
-    {% endfor %}
 </section>
 {% endblock %}
 
