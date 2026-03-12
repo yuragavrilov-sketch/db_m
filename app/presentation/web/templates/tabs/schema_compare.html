@@ -486,7 +486,7 @@ function renderIndexesTable(idx) {
         const srcUniq = item.source ? (item.source.unique ? "✓" : "—") : "—";
         const tgtUniq = item.target ? (item.target.unique ? "✓" : "—") : "—";
         return `<tr class="${cls}">
-            <td class="col-name">${esc(item.name)}</td>
+            <td class="col-name">${fmtItemName(item)}</td>
             <td>${srcCols}</td><td>${tgtCols}</td>
             <td style="text-align:center">${srcUniq}</td><td style="text-align:center">${tgtUniq}</td>
             <td>${statusBadge(item.status)}</td>
@@ -532,7 +532,7 @@ function renderFKsTable(fks) {
             return `${esc(cols)} → ${esc(ref)}`;
         };
         return `<tr class="${cls}">
-            <td class="col-name">${esc(item.name)}</td>
+            <td class="col-name">${fmtItemName(item)}</td>
             <td>${fmtFk(item.source)}</td>
             <td>${fmtFk(item.target)}</td>
             <td>${statusBadge(item.status)}</td>
@@ -551,6 +551,14 @@ function diffFieldTags(fields) {
     const labels = {type: "тип", nullable: "null", "default": "default",
                     event: "событие", timing: "timing", enabled: "enabled", body: "тело"};
     return " " + fields.map(f => `<span class="diff-field-tag">${labels[f] || esc(f)}</span>`).join(" ");
+}
+
+// Show item name; if target has different auto-generated name, show it as tooltip/sub-text
+function fmtItemName(item) {
+    if (item.target_name && item.target_name !== item.name) {
+        return `${esc(item.name)}<br><span style="font-size:10px;color:var(--muted);font-weight:400">tgt: ${esc(item.target_name)}</span>`;
+    }
+    return esc(item.name);
 }
 
 function renderNamedTable(section, colLabel, detailFn) {
@@ -572,7 +580,7 @@ function renderNamedTable(section, colLabel, detailFn) {
         const tgtDetail = item.target ? esc(detailFn(item.target)) : '<span class="cell-missing">—</span>';
         const tags = diffFieldTags(item.diff_fields);
         return `<tr class="${cls}">
-            <td class="col-name">${esc(item.name)}</td>
+            <td class="col-name">${fmtItemName(item)}</td>
             <td>${srcDetail}</td>
             <td>${tgtDetail}</td>
             <td>${statusBadge(item.status)}${tags ? " " + tags : ""}</td>

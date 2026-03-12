@@ -326,6 +326,74 @@ class SchemaCompareService:
         return {"items": items, "same": same}
 
     @staticmethod
+    def _compare_named(
+        source_items: list,
+        target_items: list,
+        key_fn: Any,
+        eq_fn: Any,
+        detail_fn: Any,
+    ) -> dict[str, Any]:
+        """Compare named items by name first, then fall back to content matching.
+
+        When two items have the same content but different names (e.g. auto-generated
+        constraint names like SYS_C001234 vs pg_constraint_xyz), they are treated as
+        "same" and the target name is recorded in ``target_name`` for UI display.
+        """
+        src_by_key = {key_fn(x): x for x in source_items if key_fn(x)}
+        tgt_by_key = {key_fn(x): x for x in target_items if key_fn(x)}
+
+        items: list[dict[str, Any]] = []
+        same = True
+        used_tgt_keys: set[str] = set()
+
+        # 1. Exact name matches
+        for key in sorted(set(src_by_key) & set(tgt_by_key)):
+            src = src_by_key[key]
+            tgt = tgt_by_key[key]
+            is_eq = eq_fn(src, tgt)
+            if not is_eq:
+                same = False
+            items.append({"name": key, "source": detail_fn(src), "target": detail_fn(tgt),
+                           "status": "same" if is_eq else "different", "diff_fields": []})
+            used_tgt_keys.add(key)
+
+        # 2. Content-based fallback for unmatched items
+        unmatched_src = [x for k, x in src_by_key.items() if k not in tgt_by_key]
+        avail_tgt = {k: x for k, x in tgt_by_key.items() if k not in src_by_key}
+
+        used_content_tgt: set[str] = set()
+        for src in unmatched_src:
+            matched_key = next(
+                (k for k, t in avail_tgt.items() if k not in used_content_tgt and eq_fn(src, t)),
+                None,
+            )
+            if matched_key is not None:
+                used_content_tgt.add(matched_key)
+                # Same content, different auto-generated name — not a real difference
+                entry: dict[str, Any] = {
+                    "name": key_fn(src),
+                    "source": detail_fn(src),
+                    "target": detail_fn(avail_tgt[matched_key]),
+                    "status": "same",
+                    "diff_fields": [],
+                }
+                if matched_key != key_fn(src):
+                    entry["target_name"] = matched_key
+                items.append(entry)
+            else:
+                same = False
+                items.append({"name": key_fn(src), "source": detail_fn(src), "target": None,
+                               "status": "missing_in_target", "diff_fields": []})
+
+        for k, tgt in avail_tgt.items():
+            if k not in used_content_tgt:
+                same = False
+                items.append({"name": k, "source": None, "target": detail_fn(tgt),
+                               "status": "extra_in_target", "diff_fields": []})
+
+        return {"items": sorted(items, key=lambda x: x["name"]), "same": same}
+
+    @staticmethod
     def _compare_indexes(source_idx: list, target_idx: list) -> dict[str, Any]:
         def detail(i: dict) -> dict:
             return {"columns": i.get("column_names", []), "unique": bool(i.get("unique", False))}
@@ -336,27 +404,12 @@ class SchemaCompareService:
                 and bool(s.get("unique")) == bool(t.get("unique"))
             )
 
-        src_by_name = {i["name"]: i for i in source_idx if i.get("name")}
-        tgt_by_name = {i["name"]: i for i in target_idx if i.get("name")}
-        all_names = sorted(set(src_by_name) | set(tgt_by_name))
-        items = []
-        same = True
-        for name in all_names:
-            src = src_by_name.get(name)
-            tgt = tgt_by_name.get(name)
-            if src and tgt:
-                is_eq = eq(src, tgt)
-                if not is_eq:
-                    same = False
-                items.append({"name": name, "source": detail(src), "target": detail(tgt),
-                               "status": "same" if is_eq else "different"})
-            elif src:
-                same = False
-                items.append({"name": name, "source": detail(src), "target": None, "status": "missing_in_target"})
-            else:
-                same = False
-                items.append({"name": name, "source": None, "target": detail(tgt), "status": "extra_in_target"})
-        return {"items": items, "same": same}
+        return SchemaCompareService._compare_named(
+            source_idx, target_idx,
+            key_fn=lambda i: i.get("name") or "",
+            eq_fn=eq,
+            detail_fn=detail,
+        )
 
     @staticmethod
     def _compare_pk(source_pk: dict, target_pk: dict) -> dict[str, Any]:
@@ -386,27 +439,12 @@ class SchemaCompareService:
                 and sorted(s.get("referred_columns") or []) == sorted(t.get("referred_columns") or [])
             )
 
-        src_by_name = {fk.get("name") or "": fk for fk in source_fks}
-        tgt_by_name = {fk.get("name") or "": fk for fk in target_fks}
-        all_names = sorted(set(src_by_name) | set(tgt_by_name))
-        items = []
-        same = True
-        for name in all_names:
-            src = src_by_name.get(name)
-            tgt = tgt_by_name.get(name)
-            if src and tgt:
-                is_eq = eq(src, tgt)
-                if not is_eq:
-                    same = False
-                items.append({"name": name, "source": detail(src), "target": detail(tgt),
-                               "status": "same" if is_eq else "different"})
-            elif src:
-                same = False
-                items.append({"name": name, "source": detail(src), "target": None, "status": "missing_in_target"})
-            else:
-                same = False
-                items.append({"name": name, "source": None, "target": detail(tgt), "status": "extra_in_target"})
-        return {"items": items, "same": same}
+        return SchemaCompareService._compare_named(
+            source_fks, target_fks,
+            key_fn=lambda fk: fk.get("name") or "",
+            eq_fn=eq,
+            detail_fn=detail,
+        )
 
     @staticmethod
     def _compare_named_items(
@@ -416,27 +454,9 @@ class SchemaCompareService:
         eq_fn: Any,
         detail_fn: Any,
     ) -> dict[str, Any]:
-        src_by_key = {key_fn(x): x for x in source_items if key_fn(x)}
-        tgt_by_key = {key_fn(x): x for x in target_items if key_fn(x)}
-        all_keys = sorted(set(src_by_key) | set(tgt_by_key))
-        items = []
-        same = True
-        for key in all_keys:
-            src = src_by_key.get(key)
-            tgt = tgt_by_key.get(key)
-            if src and tgt:
-                is_eq = eq_fn(src, tgt)
-                if not is_eq:
-                    same = False
-                items.append({"name": key, "source": detail_fn(src), "target": detail_fn(tgt),
-                               "status": "same" if is_eq else "different"})
-            elif src:
-                same = False
-                items.append({"name": key, "source": detail_fn(src), "target": None, "status": "missing_in_target"})
-            else:
-                same = False
-                items.append({"name": key, "source": None, "target": detail_fn(tgt), "status": "extra_in_target"})
-        return {"items": items, "same": same}
+        return SchemaCompareService._compare_named(
+            source_items, target_items, key_fn=key_fn, eq_fn=eq_fn, detail_fn=detail_fn,
+        )
 
     @staticmethod
     def _compare_triggers(source_trigs: list, target_trigs: list) -> dict[str, Any]:
