@@ -209,16 +209,14 @@
 const PAGE_SIZE_KEY = "schema_page_size";
 
 const state = {
-    filter:       "all",
-    catFilter:    "",
-    rows:         [],
-    detailsOpen:  new Set(),
-    sse:          null,
-    reconnectTimer: null,
-    sort:         {col: "source_table", dir: "asc"},
-    search:       "",
-    page:         1,
-    pageSize:     parseInt(localStorage.getItem(PAGE_SIZE_KEY) || "25", 10),
+    filter:    "all",
+    catFilter: "",
+    rows:      [],
+    detailsOpen: new Set(),
+    sort:      {col: "source_table", dir: "asc"},
+    search:    "",
+    page:      1,
+    pageSize:  parseInt(localStorage.getItem(PAGE_SIZE_KEY) || "25", 10),
 };
 
 // ── Details cache (avoids re-fetching on every renderRows) ────────────────────
@@ -797,38 +795,29 @@ function scheduleReload() {
     _sseReloadTimer = setTimeout(() => reload().catch(() => {}), 350);
 }
 
-// ── SSE ───────────────────────────────────────────────────────────────────────
+// ── SSE (shared connection from base.html via CustomEvents) ──────────────────
 
 function setSseState(text, disconnected) {
     const el = document.getElementById("sse-state");
-    el.textContent = `Live: ${text}`;
-    el.classList.toggle("is-disconnected", !!disconnected);
+    if (el) { el.textContent = `Live: ${text}`; el.classList.toggle("is-disconnected", !!disconnected); }
 }
 
-function connectSse() {
-    if (state.sse) state.sse.close();
-    setSseState("подключение...", true);
-    const es = new EventSource("/api/events/stream");
-    state.sse = es;
-    es.onopen = () => setSseState("подключено", false);
-    es.addEventListener("schema_compare_updated", (e) => {
-        const p = JSON.parse(e.data || "{}");
-        if (p.entity_id) invalidateDetail(p.entity_id);
+document.addEventListener("sse:state", (e) => {
+    setSseState(e.detail.connected ? "подключено" : "переподключение...", !e.detail.connected);
+});
+
+document.addEventListener("sse:schema_compare_updated", (e) => {
+    const p = JSON.parse(e.detail || "{}");
+    if (p.entity_id) invalidateDetail(p.entity_id);
+    scheduleReload();
+});
+
+document.addEventListener("sse:job_updated", (e) => {
+    const p = JSON.parse(e.detail || "{}");
+    if (p.job_type === "schema_compare_table" || p.job_type === "schema_compare_all") {
         scheduleReload();
-    });
-    es.addEventListener("job_updated", (e) => {
-        const p = JSON.parse(e.data || "{}");
-        if (p.job_type === "schema_compare_table" || p.job_type === "schema_compare_all") {
-            scheduleReload();
-        }
-    });
-    es.onerror = () => {
-        setSseState("переподключение...", true);
-        es.close();
-        if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-        state.reconnectTimer = setTimeout(connectSse, 2000);
-    };
-}
+    }
+});
 
 // ── События ───────────────────────────────────────────────────────────────────
 
@@ -902,6 +891,6 @@ document.getElementById("pg-size").addEventListener("change", (e) => {
 // ── Старт ─────────────────────────────────────────────────────────────────────
 
 reload().catch((err) => showMsg(`Ошибка загрузки: ${err.message}`));
-connectSse();
+setSseState("подключение...", true);
 </script>
 {% endblock %}

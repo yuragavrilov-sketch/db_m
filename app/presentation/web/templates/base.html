@@ -58,7 +58,9 @@
 
     <script>
     (function () {
-        const COMPONENTS = ['source_db', 'target_db', 'kafka', 'kafka_connect'];
+        var COMPONENTS = ['source_db', 'target_db', 'kafka', 'kafka_connect'];
+        // Events forwarded as document CustomEvents so tab pages share this connection
+        var FORWARD_EVENTS = ['schema_compare_updated', 'job_updated'];
 
         function applyStatus(data) {
             COMPONENTS.forEach(function (key) {
@@ -74,13 +76,6 @@
             });
         }
 
-        function markChecking() {
-            COMPONENTS.forEach(function (key) {
-                var dot = document.getElementById('dot-' + key);
-                if (dot) dot.className = 'chip-dot is-checking';
-            });
-        }
-
         function fetchStatus() {
             fetch('/api/health-status')
                 .then(function (r) { return r.json(); })
@@ -88,21 +83,40 @@
                 .catch(function () {});
         }
 
-        fetchStatus();
+        var es = null;
+        var reconnectTimer = null;
 
-        var es = new EventSource('/api/events/stream');
-        es.addEventListener('health_status_updated', function (e) {
-            try { applyStatus(JSON.parse(e.data)); } catch (_) {}
-        });
-        es.onerror = function () {
-            setTimeout(function () {
-                es.close();
-                es = new EventSource('/api/events/stream');
-                es.addEventListener('health_status_updated', function (e) {
-                    try { applyStatus(JSON.parse(e.data)); } catch (_) {}
+        function dispatchSseState(connected) {
+            document.dispatchEvent(new CustomEvent('sse:state', {detail: {connected: connected}}));
+        }
+
+        function connect() {
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            if (es) { es.close(); es = null; }
+            es = new EventSource('/api/events/stream');
+            es.onopen = function () { dispatchSseState(true); };
+            es.addEventListener('health_status_updated', function (e) {
+                try { applyStatus(JSON.parse(e.data)); } catch (_) {}
+            });
+            FORWARD_EVENTS.forEach(function (type) {
+                es.addEventListener(type, function (e) {
+                    document.dispatchEvent(new CustomEvent('sse:' + type, {detail: e.data}));
                 });
-            }, 3000);
-        };
+            });
+            es.onerror = function () {
+                dispatchSseState(false);
+                if (es) { es.close(); es = null; }
+                reconnectTimer = setTimeout(connect, 3000);
+            };
+        }
+
+        fetchStatus();
+        connect();
+
+        window.addEventListener('beforeunload', function () {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (es) { es.close(); es = null; }
+        });
     })();
     </script>
 

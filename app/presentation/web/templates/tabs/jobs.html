@@ -76,8 +76,6 @@
 const state = {
     rows: [],
     selectedId: null,
-    sse: null,
-    reconnectTimer: null,
     limit: 25,
     offset: 0,
     total: 0,
@@ -194,29 +192,19 @@ async function reloadList() {
     renderRows();
 }
 
-function connectSse() {
-    if (state.sse) state.sse.close();
-    setSseState("подключение...", true);
-    const es = new EventSource("/api/events/stream");
-    state.sse = es;
+// ── SSE (shared connection from base.html via CustomEvents) ──────────────────
 
-    es.onopen = () => setSseState("подключено", false);
+document.addEventListener("sse:state", (e) => {
+    setSseState(e.detail.connected ? "подключено" : "переподключение...", !e.detail.connected);
+});
 
-    es.addEventListener("job_updated", async (e) => {
-        const p = JSON.parse(e.data || "{}");
-        await reloadList();
-        if (state.selectedId && p.entity_id === state.selectedId) {
-            await loadDetails(state.selectedId);
-        }
-    });
-
-    es.onerror = () => {
-        setSseState("переподключение...", true);
-        es.close();
-        if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-        state.reconnectTimer = setTimeout(connectSse, 2000);
-    };
-}
+document.addEventListener("sse:job_updated", async (e) => {
+    const p = JSON.parse(e.detail || "{}");
+    await reloadList();
+    if (state.selectedId && p.entity_id === state.selectedId) {
+        await loadDetails(state.selectedId);
+    }
+});
 
 document.getElementById("job-filter-status").addEventListener("change", async (e) => {
     state.filters.status = e.target.value;
@@ -252,6 +240,6 @@ document.getElementById("jobs-next").addEventListener("click", async () => {
 });
 
 reloadList().catch((err) => showMsg(`Ошибка загрузки: ${err.message}`));
-connectSse();
+setSseState("подключение...", true);
 </script>
 {% endblock %}

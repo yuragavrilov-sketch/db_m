@@ -54,7 +54,7 @@ class SseBroker:
             yield ": connected\n\n"
             while True:
                 try:
-                    evt = q.get(timeout=20)
+                    evt = q.get(timeout=5)
                     yield self.format_event(evt)
                 except queue.Empty:
                     yield ": heartbeat\n\n"
