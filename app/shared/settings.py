@@ -9,6 +9,7 @@ class Settings:
     secret_key: str
     sqlalchemy_echo: bool
     status_check_interval: int
+    job_cleanup_interval: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -18,6 +19,7 @@ class Settings:
             secret_key=os.getenv("SECRET_KEY", "dev-secret-key"),
             sqlalchemy_echo=os.getenv("SQLALCHEMY_ECHO", "0") == "1",
             status_check_interval=int(os.getenv("STATUS_CHECK_INTERVAL_SECONDS", "60")),
+            job_cleanup_interval=int(os.getenv("JOB_CLEANUP_INTERVAL_SECONDS", "60")),
         )
 
     def to_flask_config(self) -> dict:

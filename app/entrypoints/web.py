@@ -4,6 +4,7 @@ from alembic.config import Config
 
 from app.application.services.background_executor import background_executor
 from app.application.services.health_monitor import health_monitor
+from app.application.services.job_cleanup import job_cleanup
 from app.infrastructure.db.extensions import db
 from app.infrastructure.db.models import ActiveConfig, ConfigProfile, Job, SchemaMapping
 from app.presentation.web.controllers.api_config import api_config_bp
@@ -61,4 +62,5 @@ def create_web_app() -> Flask:
 
     background_executor.start(app)
     health_monitor.start(app, interval_seconds=settings.status_check_interval)
+    job_cleanup.start(app, interval_seconds=settings.job_cleanup_interval)
     return app
