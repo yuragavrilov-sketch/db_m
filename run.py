@@ -1,4 +1,5 @@
 import os
+import sys
 
 from dotenv import load_dotenv
 
@@ -8,7 +9,8 @@ from app import create_app
 
 
 def main() -> None:
-    work_type = os.getenv("WORK_TYPE", "web")
+    # CLI arg takes priority over WORK_TYPE env var: python run.py [web|worker]
+    work_type = sys.argv[1] if len(sys.argv) > 1 else os.getenv("WORK_TYPE", "web")
     app = create_app(work_type=work_type)
     app.run(
         host=os.getenv("FLASK_RUN_HOST", "127.0.0.1"),
