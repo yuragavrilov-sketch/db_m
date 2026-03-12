@@ -62,13 +62,6 @@
     </div>
     <div id="jobs-message" class="message"></div>
 </section>
-
-<section class="panel">
-    <div class="panel-header">
-        <h3>Детали job</h3>
-    </div>
-    <div id="job-details" class="details-box">Выберите job из списка.</div>
-</section>
 {% endblock %}
 
 {% block scripts %}
@@ -81,6 +74,9 @@ const state = {
     total: 0,
     filters: {status: "", type: "", q: ""},
 };
+
+// cached details HTML for the currently selected job
+let detailsCache = null; // {id, html}
 
 function showMsg(text) {
     document.getElementById("jobs-message").textContent = text || "";
@@ -120,6 +116,20 @@ function renderPageInfo() {
     document.getElementById("jobs-next").disabled = state.offset + state.rows.length >= state.total;
 }
 
+function _insertDetailsRow(id, html) {
+    const mainRow = document.querySelector(`tr[data-id="${id}"]`);
+    if (!mainRow) return;
+    document.querySelectorAll("tr.details-tr").forEach((r) => r.remove());
+    const tr = document.createElement("tr");
+    tr.classList.add("details-tr");
+    const td = document.createElement("td");
+    td.colSpan = 6;
+    td.style.cssText = "padding:0";
+    td.innerHTML = `<div class="details-box" style="margin:4px 8px 8px">${html}</div>`;
+    tr.appendChild(td);
+    mainRow.insertAdjacentElement("afterend", tr);
+}
+
 function renderRows() {
     const tbody = document.getElementById("jobs-rows");
     if (!state.rows.length) {
@@ -128,24 +138,39 @@ function renderRows() {
         return;
     }
 
-    tbody.innerHTML = state.rows.map((job) => `
-        <tr data-id="${job.id}" class="${state.selectedId === job.id ? "row-selected" : ""}">
+    tbody.innerHTML = state.rows.map((job) => {
+        const isOpen = state.selectedId === job.id;
+        return `<tr data-id="${job.id}" class="${isOpen ? "row-selected" : ""}">
             <td><code style="font-size:11px">${job.id.slice(0, 8)}…</code></td>
             <td>${job.type}</td>
             <td><span class="${badgeClass(job.status)}">${job.status}</span></td>
             <td>${fmtDt(job.created_at)}</td>
             <td>${fmtDt(job.updated_at)}</td>
             <td class="actions">
-                <button type="button" class="js-open-details btn-secondary" data-id="${job.id}">Детали</button>
+                <button type="button" class="js-open-details btn-secondary" data-id="${job.id}">${isOpen ? "Скрыть" : "Детали"}</button>
             </td>
-        </tr>
-    `).join("");
+        </tr>`;
+    }).join("");
+
+    // Restore cached details row right after its main row
+    if (state.selectedId && detailsCache && detailsCache.id === state.selectedId) {
+        _insertDetailsRow(state.selectedId, detailsCache.html);
+    }
 
     document.querySelectorAll(".js-open-details").forEach((btn) => {
         btn.addEventListener("click", async () => {
-            state.selectedId = btn.dataset.id;
+            const id = btn.dataset.id;
+            if (state.selectedId === id) {
+                // collapse
+                state.selectedId = null;
+                detailsCache = null;
+                renderRows();
+                return;
+            }
+            state.selectedId = id;
+            detailsCache = null;
             renderRows();
-            await loadDetails(state.selectedId);
+            await loadDetails(id);
         });
     });
 
@@ -153,11 +178,10 @@ function renderRows() {
 }
 
 async function loadDetails(id) {
-    const box = document.getElementById("job-details");
-    box.textContent = "Загрузка...";
+    _insertDetailsRow(id, "<em>Загрузка…</em>");
     try {
         const d = await api(`/api/jobs/${id}`);
-        box.innerHTML = `<pre>${JSON.stringify({
+        const html = `<pre>${JSON.stringify({
             id: d.id,
             type: d.type,
             status: d.status,
@@ -170,8 +194,10 @@ async function loadDetails(id) {
             error_text: d.error_text,
             progress_log: d.progress_log,
         }, null, 2)}</pre>`;
+        detailsCache = {id, html};
+        _insertDetailsRow(id, html);
     } catch (err) {
-        box.textContent = `Ошибка: ${err.message}`;
+        _insertDetailsRow(id, `<span style="color:var(--red)">Ошибка: ${err.message}</span>`);
     }
 }
 
@@ -192,7 +218,7 @@ async function reloadList() {
     renderRows();
 }
 
-// ── SSE (shared connection from base.html via CustomEvents) ──────────────────
+// ── SSE ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener("sse:state", (e) => {
     setSseState(e.detail.connected ? "подключено" : "переподключение...", !e.detail.connected);

@@ -136,7 +136,8 @@ class BackgroundExecutor:
             diff_summary=result.get("diff") if isinstance(result, dict) else None,
             job_id=job.id,
         )
-        self._finish(job, ok=ok, message="Schema compare table finished", meta={"ok": ok, "status": compare_status})
+        job_ok = error_text is None
+        self._finish(job, ok=job_ok, message="Schema compare table finished", meta={"same": ok, "status": compare_status})
 
     def _handle_schema_compare_all(self, job: Job) -> None:
         self._mark_running(job, "Schema compare all started")

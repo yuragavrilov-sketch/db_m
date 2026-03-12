@@ -268,6 +268,19 @@ class SchemaCompareService:
     # ── Comparison helpers ────────────────────────────────────────────────────
 
     @staticmethod
+    def _normalize_default(val: Any) -> str | None:
+        """Normalize a column default for cross-DB comparison.
+
+        - Strips leading/trailing whitespace (Oracle often returns ' 0' instead of '0').
+        - Treats SQL NULL literals ('NULL', 'null') as absent defaults so that
+          Oracle's explicit 'NULL' string and Postgres's Python None compare equal.
+        """
+        if val is None:
+            return None
+        s = str(val).strip()
+        return None if s.upper() == "NULL" else s
+
+    @staticmethod
     def _compare_columns(source_cols: list, target_cols: list) -> dict[str, Any]:
         src_by_name = {c["name"]: c for c in source_cols}
         tgt_by_name = {c["name"]: c for c in target_cols}
@@ -276,6 +289,7 @@ class SchemaCompareService:
         ))
         items = []
         same = True
+        _nd = SchemaCompareService._normalize_default
         for name in all_names:
             src = src_by_name.get(name)
             tgt = tgt_by_name.get(name)
@@ -284,8 +298,8 @@ class SchemaCompareService:
                 tgt_type = str(tgt.get("type", ""))
                 src_null = src.get("nullable", True)
                 tgt_null = tgt.get("nullable", True)
-                src_def = str(src["default"]) if src.get("default") is not None else None
-                tgt_def = str(tgt["default"]) if tgt.get("default") is not None else None
+                src_def = _nd(src.get("default"))
+                tgt_def = _nd(tgt.get("default"))
                 diff_fields = []
                 if src_type != tgt_type:
                     diff_fields.append("type")
@@ -308,7 +322,7 @@ class SchemaCompareService:
                 items.append({
                     "name": name,
                     "source": {"type": str(src.get("type", "")), "nullable": src.get("nullable", True),
-                               "default": str(src["default"]) if src.get("default") is not None else None},
+                               "default": _nd(src.get("default"))},
                     "target": None,
                     "status": "missing_in_target",
                     "diff_fields": [],
@@ -319,7 +333,7 @@ class SchemaCompareService:
                     "name": name,
                     "source": None,
                     "target": {"type": str(tgt.get("type", "")), "nullable": tgt.get("nullable", True),
-                               "default": str(tgt["default"]) if tgt.get("default") is not None else None},
+                               "default": _nd(tgt.get("default"))},
                     "status": "extra_in_target",
                     "diff_fields": [],
                 })
