@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+
+{% block title %}Джобы{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <div class="panel-header">
+        <h2>Джобы</h2>
+        <p class="panel-subtitle">Мониторинг выполнения фоновых задач и их результатов</p>
+    </div>
+
+    <div class="jobs-toolbar">
+        <div class="jobs-filters">
+            <label>Статус
+                <select id="job-filter-status">
+                    <option value="">Все</option>
+                    <option value="queued">queued</option>
+                    <option value="running">running</option>
+                    <option value="success">success</option>
+                    <option value="failed">failed</option>
+                    <option value="cancelled">cancelled</option>
+                </select>
+            </label>
+            <label>Тип
+                <select id="job-filter-type">
+                    <option value="">Все</option>
+                    <option value="connection_test">connection_test</option>
+                    <option value="schema_compare_table">schema_compare_table</option>
+                    <option value="schema_compare_all">schema_compare_all</option>
+                </select>
+            </label>
+            <label>Поиск
+                <input id="job-filter-q" type="text" placeholder="requested_by / текст ошибки">
+            </label>
+            <button type="button" id="jobs-reload-btn" class="btn-secondary">Обновить</button>
+        </div>
+        <div id="jobs-sse-state" class="sse-state">Live: подключение...</div>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Тип</th>
+                    <th>Статус</th>
+                    <th>Создана</th>
+                    <th>Обновлена</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="jobs-rows">
+                <tr><td colspan="6">Загрузка...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="jobs-pagination">
+        <button type="button" id="jobs-prev" class="btn-secondary">← Назад</button>
+        <span id="jobs-page-info">—</span>
+        <button type="button" id="jobs-next" class="btn-secondary">Вперёд →</button>
+    </div>
+    <div id="jobs-message" class="message"></div>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <h3>Детали job</h3>
+    </div>
+    <div id="job-details" class="details-box">Выберите job из списка.</div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const state = {
+    rows: [],
+    selectedId: null,
+    sse: null,
+    reconnectTimer: null,
+    limit: 25,
+    offset: 0,
+    total: 0,
+    filters: {status: "", type: "", q: ""},
+};
+
+function showMsg(text) {
+    document.getElementById("jobs-message").textContent = text || "";
+}
+
+function setSseState(text, disconnected) {
+    const el = document.getElementById("jobs-sse-state");
+    el.textContent = `Live: ${text}`;
+    el.classList.toggle("is-disconnected", !!disconnected);
+}
+
+function badgeClass(status) {
+    const map = {success: "badge-same", failed: "badge-different", running: "badge-running", queued: "badge-queued"};
+    return "badge " + (map[status] || "badge-unknown");
+}
+
+function fmtDt(iso) {
+    return iso ? iso.replace("T", " ").slice(0, 19) : "—";
+}
+
+async function api(url, method = "GET", body = null) {
+    const resp = await fetch(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: body ? JSON.stringify(body) : null,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+}
+
+function renderPageInfo() {
+    const from = state.total === 0 ? 0 : state.offset + 1;
+    const to = Math.min(state.offset + state.rows.length, state.total);
+    document.getElementById("jobs-page-info").textContent = `Показано ${from}–${to} из ${state.total}`;
+    document.getElementById("jobs-prev").disabled = state.offset <= 0;
+    document.getElementById("jobs-next").disabled = state.offset + state.rows.length >= state.total;
+}
+
+function renderRows() {
+    const tbody = document.getElementById("jobs-rows");
+    if (!state.rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6">Job не найдены</td></tr>';
+        renderPageInfo();
+        return;
+    }
+
+    tbody.innerHTML = state.rows.map((job) => `
+        <tr data-id="${job.id}" class="${state.selectedId === job.id ? "row-selected" : ""}">
+            <td><code style="font-size:11px">${job.id.slice(0, 8)}…</code></td>
+            <td>${job.type}</td>
+            <td><span class="${badgeClass(job.status)}">${job.status}</span></td>
+            <td>${fmtDt(job.created_at)}</td>
+            <td>${fmtDt(job.updated_at)}</td>
+            <td class="actions">
+                <button type="button" class="js-open-details btn-secondary" data-id="${job.id}">Детали</button>
+            </td>
+        </tr>
+    `).join("");
+
+    document.querySelectorAll(".js-open-details").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+            state.selectedId = btn.dataset.id;
+            renderRows();
+            await loadDetails(state.selectedId);
+        });
+    });
+
+    renderPageInfo();
+}
+
+async function loadDetails(id) {
+    const box = document.getElementById("job-details");
+    box.textContent = "Загрузка...";
+    try {
+        const d = await api(`/api/jobs/${id}`);
+        box.innerHTML = `<pre>${JSON.stringify({
+            id: d.id,
+            type: d.type,
+            status: d.status,
+            requested_by: d.requested_by,
+            created_at: d.created_at,
+            started_at: d.started_at,
+            finished_at: d.finished_at,
+            payload: d.payload,
+            result: d.result,
+            error_text: d.error_text,
+            progress_log: d.progress_log,
+        }, null, 2)}</pre>`;
+    } catch (err) {
+        box.textContent = `Ошибка: ${err.message}`;
+    }
+}
+
+function buildQuery() {
+    const p = new URLSearchParams();
+    if (state.filters.status) p.set("status", state.filters.status);
+    if (state.filters.type) p.set("type", state.filters.type);
+    if (state.filters.q) p.set("q", state.filters.q);
+    p.set("limit", String(state.limit));
+    p.set("offset", String(state.offset));
+    return p.toString();
+}
+
+async function reloadList() {
+    const data = await api(`/api/jobs?${buildQuery()}`);
+    state.rows = data.items || [];
+    state.total = (data.pagination && data.pagination.total) || 0;
+    renderRows();
+}
+
+function connectSse() {
+    if (state.sse) state.sse.close();
+    setSseState("подключение...", true);
+    const es = new EventSource("/api/events/stream");
+    state.sse = es;
+
+    es.onopen = () => setSseState("подключено", false);
+
+    es.addEventListener("job_updated", async (e) => {
+        const p = JSON.parse(e.data || "{}");
+        await reloadList();
+        if (state.selectedId && p.entity_id === state.selectedId) {
+            await loadDetails(state.selectedId);
+        }
+    });
+
+    es.onerror = () => {
+        setSseState("переподключение...", true);
+        es.close();
+        if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = setTimeout(connectSse, 2000);
+    };
+}
+
+document.getElementById("job-filter-status").addEventListener("change", async (e) => {
+    state.filters.status = e.target.value;
+    state.offset = 0;
+    await reloadList().catch((err) => showMsg(err.message));
+});
+
+document.getElementById("job-filter-type").addEventListener("change", async (e) => {
+    state.filters.type = e.target.value;
+    state.offset = 0;
+    await reloadList().catch((err) => showMsg(err.message));
+});
+
+document.getElementById("job-filter-q").addEventListener("change", async (e) => {
+    state.filters.q = (e.target.value || "").trim();
+    state.offset = 0;
+    await reloadList().catch((err) => showMsg(err.message));
+});
+
+document.getElementById("jobs-reload-btn").addEventListener("click", async () => {
+    await reloadList().catch((err) => showMsg(err.message));
+    if (state.selectedId) await loadDetails(state.selectedId);
+});
+
+document.getElementById("jobs-prev").addEventListener("click", async () => {
+    state.offset = Math.max(0, state.offset - state.limit);
+    await reloadList().catch((err) => showMsg(err.message));
+});
+
+document.getElementById("jobs-next").addEventListener("click", async () => {
+    state.offset += state.limit;
+    await reloadList().catch((err) => showMsg(err.message));
+});
+
+reloadList().catch((err) => showMsg(`Ошибка загрузки: ${err.message}`));
+connectSse();
+</script>
+{% endblock %}

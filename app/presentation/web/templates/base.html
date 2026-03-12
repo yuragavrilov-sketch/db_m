@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DB Migration{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand-block">
+                <h1>DB Migration</h1>
+                <p class="topbar-subtitle">Web Console</p>
+            </div>
+            <nav class="tabs" aria-label="Основная навигация">
+                <a href="{{ url_for('pages.config_tab') }}"
+                   class="{% if request.path == '/' or request.path.startswith('/config') %}is-active{% endif %}">
+                    Конфигурация
+                </a>
+                <a href="{{ url_for('pages.schema_tab') }}"
+                   class="{% if request.path.startswith('/schema') %}is-active{% endif %}">
+                    Сравнение схем
+                </a>
+                <a href="{{ url_for('pages.jobs_tab') }}"
+                   class="{% if request.path.startswith('/jobs') %}is-active{% endif %}">
+                    Джобы
+                </a>
+            </nav>
+        </div>
+    </header>
+
+    <div class="content-wrap">
+        <main class="content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

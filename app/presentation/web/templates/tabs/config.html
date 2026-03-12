@@ -1,0 +1,360 @@
+{% extends "base.html" %}
+
+{% block title %}Конфигурация{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <div class="panel-header">
+        <h2>Создать конфигурацию</h2>
+        <p class="panel-subtitle">Добавление профиля подключения к БД или Kafka</p>
+    </div>
+    <form id="create-config-form" class="form-grid">
+        <div class="form-row-2">
+            <label>Тип конфигурации
+                <select name="config_type" id="create-type" required>
+                    {% for t in config_types %}
+                    <option value="{{ t }}">{{ config_type_labels[t] }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>Название
+                <input type="text" name="name" required placeholder="Например: Production Source">
+            </label>
+        </div>
+        <label>Описание
+            <input type="text" name="description" placeholder="Необязательно">
+        </label>
+        <div id="create-settings-fields"></div>
+        <button type="submit">Создать</button>
+    </form>
+    <div id="create-message" class="message"></div>
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <h2>Список конфигураций</h2>
+        <p class="panel-subtitle">Управление активными и доступными профилями подключений</p>
+    </div>
+    {% for t in config_types %}
+    <h3 class="section-title">{{ config_type_labels[t] }}</h3>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Название</th>
+                    <th>Подключение</th>
+                    <th>Активна</th>
+                    <th>Включена</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for cfg in grouped_configs[t] %}
+                <tr>
+                    <td>
+                        <strong>{{ cfg.name }}</strong>
+                        {% if cfg.description %}
+                        <br><span class="text-muted">{{ cfg.description }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <code class="conn-summary">{{ cfg.conn_summary }}</code>
+                    </td>
+                    <td>
+                        <span class="badge {% if cfg.is_active %}badge-same{% else %}badge-unknown{% endif %}">
+                            {{ 'да' if cfg.is_active else 'нет' }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge {% if cfg.is_enabled %}badge-same{% else %}badge-missing{% endif %}">
+                            {{ 'да' if cfg.is_enabled else 'нет' }}
+                        </span>
+                    </td>
+                    <td class="actions">
+                        <form class="js-activate-form" data-id="{{ cfg.id }}">
+                            <button type="submit">Активировать</button>
+                        </form>
+                        <form class="js-test-form" data-id="{{ cfg.id }}">
+                            <button type="submit" class="btn-secondary">Тест</button>
+                        </form>
+                    </td>
+                </tr>
+                <tr class="edit-row">
+                    <td colspan="5">
+                        <details>
+                            <summary>Редактировать: {{ cfg.name }}</summary>
+                            <form class="form-grid form-inline js-update-form"
+                                  data-id="{{ cfg.id }}"
+                                  data-config-type="{{ cfg.config_type }}"
+                                  data-settings="{{ cfg.settings | tojson }}">
+                                <div class="form-row-2">
+                                    <label>Название
+                                        <input type="text" name="name" value="{{ cfg.name }}" required>
+                                    </label>
+                                    <label>Описание
+                                        <input type="text" name="description" value="{{ cfg.description or '' }}">
+                                    </label>
+                                </div>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="is_enabled" {% if cfg.is_enabled %}checked{% endif %}>
+                                    Включена
+                                </label>
+                                <div class="edit-settings-fields"></div>
+                                <div class="form-actions">
+                                    <button type="submit">Сохранить</button>
+                                    <button type="button" class="danger js-delete-btn" data-id="{{ cfg.id }}">Удалить</button>
+                                </div>
+                            </form>
+                            <div class="edit-message message" data-id="{{ cfg.id }}"></div>
+                        </details>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="text-muted">Нет конфигураций этого типа</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endfor %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Утилиты ───────────────────────────────────────────────────────────────────
+
+function esc(s) {
+    return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+async function sendJson(url, method, body) {
+    const resp = await fetch(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: body != null ? JSON.stringify(body) : null,
+    });
+    if (resp.status === 204) return {ok: true, data: null};
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return {ok: true, data};
+}
+
+function showMsg(el, text, isError) {
+    el.textContent = text;
+    el.style.color = isError ? "var(--danger)" : "var(--success)";
+}
+
+// ── Парсинг / сборка database_url ────────────────────────────────────────────
+
+function parseDbUrl(url) {
+    if (!url) return {};
+    try {
+        const u = new URL(url.replace(/^[a-zA-Z+]+:\/\//, "http://"));
+        return {
+            host:     u.hostname || "localhost",
+            port:     u.port     || "5432",
+            dbname:   u.pathname.replace(/^\//, ""),
+            username: decodeURIComponent(u.username || ""),
+            password: decodeURIComponent(u.password || ""),
+        };
+    } catch {
+        return {host: "localhost", port: "5432", dbname: "", username: "", password: ""};
+    }
+}
+
+function buildDbUrl(host, port, dbname, username, password) {
+    const auth = username
+        ? encodeURIComponent(username) + (password ? ":" + encodeURIComponent(password) : "") + "@"
+        : "";
+    return `postgresql+psycopg://${auth}${host}:${port}/${dbname}`;
+}
+
+// ── Поля настроек по типу ────────────────────────────────────────────────────
+
+function renderSettingsFields(configType, s) {
+    s = s || {};
+    if (configType === "source_db" || configType === "target_db") {
+        const db = parseDbUrl(s.database_url || "");
+        return `
+<fieldset class="settings-group">
+  <legend>Параметры подключения к PostgreSQL</legend>
+  <div class="form-row-2">
+    <label>Хост
+      <input name="s_host" value="${esc(db.host || "localhost")}" placeholder="localhost" required>
+    </label>
+    <label>Порт
+      <input name="s_port" type="number" min="1" max="65535"
+             value="${esc(db.port || "5432")}" placeholder="5432" required>
+    </label>
+  </div>
+  <label>База данных
+    <input name="s_dbname" value="${esc(db.dbname || "")}" placeholder="mydb" required>
+  </label>
+  <div class="form-row-2">
+    <label>Пользователь
+      <input name="s_username" value="${esc(db.username || "")}" placeholder="postgres" required>
+    </label>
+    <label>Пароль
+      <input name="s_password" type="password" value="${esc(db.password || "")}" placeholder="••••••••">
+    </label>
+  </div>
+</fieldset>`;
+    }
+    if (configType === "kafka") {
+        return `
+<fieldset class="settings-group">
+  <legend>Параметры Kafka</legend>
+  <label>Bootstrap Servers
+    <input name="s_bootstrap_servers"
+           value="${esc(s.bootstrap_servers || "")}"
+           placeholder="broker1:9092,broker2:9092"
+           required>
+    <span class="field-hint">Один или несколько брокеров через запятую</span>
+  </label>
+</fieldset>`;
+    }
+    if (configType === "kafka_connect") {
+        return `
+<fieldset class="settings-group">
+  <legend>Параметры Kafka Connect</legend>
+  <label>URL кластера
+    <input name="s_connect_url"
+           value="${esc(s.connect_url || "")}"
+           placeholder="http://kafka-connect:8083"
+           required>
+    <span class="field-hint">REST API эндпоинт Kafka Connect</span>
+  </label>
+</fieldset>`;
+    }
+    return "";
+}
+
+function buildSettings(form, configType) {
+    if (configType === "source_db" || configType === "target_db") {
+        return {database_url: buildDbUrl(
+            form.s_host.value.trim(),
+            form.s_port.value.trim() || "5432",
+            form.s_dbname.value.trim(),
+            form.s_username.value.trim(),
+            form.s_password.value,
+        )};
+    }
+    if (configType === "kafka") {
+        return {bootstrap_servers: form.s_bootstrap_servers.value.trim()};
+    }
+    if (configType === "kafka_connect") {
+        return {connect_url: form.s_connect_url.value.trim()};
+    }
+    return {};
+}
+
+// ── Форма создания ────────────────────────────────────────────────────────────
+
+const createTypeSelect = document.getElementById("create-type");
+const createSettingsContainer = document.getElementById("create-settings-fields");
+
+function refreshCreateFields() {
+    createSettingsContainer.innerHTML = renderSettingsFields(createTypeSelect.value);
+}
+createTypeSelect.addEventListener("change", refreshCreateFields);
+refreshCreateFields();
+
+document.getElementById("create-config-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const msg = document.getElementById("create-message");
+    const configType = f.config_type.value;
+    try {
+        await sendJson("/api/configs", "POST", {
+            config_type: configType,
+            name:        f.name.value.trim(),
+            description: f.description.value.trim() || null,
+            settings:    buildSettings(f, configType),
+        });
+        showMsg(msg, "Конфигурация создана", false);
+        location.reload();
+    } catch (err) {
+        showMsg(msg, `Ошибка: ${err.message}`, true);
+    }
+});
+
+// ── Формы редактирования ──────────────────────────────────────────────────────
+
+document.querySelectorAll(".js-update-form").forEach((form) => {
+    const configType = form.dataset.configType;
+    const settings = JSON.parse(form.dataset.settings || "{}");
+    form.querySelector(".edit-settings-fields").innerHTML =
+        renderSettingsFields(configType, settings);
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const msg = document.querySelector(`.edit-message[data-id="${form.dataset.id}"]`);
+        try {
+            await sendJson(`/api/configs/${form.dataset.id}`, "PUT", {
+                name:        form.name.value.trim(),
+                description: form.description.value.trim() || null,
+                is_enabled:  form.is_enabled.checked,
+                settings:    buildSettings(form, configType),
+            });
+            showMsg(msg, "Сохранено", false);
+            location.reload();
+        } catch (err) {
+            showMsg(msg, `Ошибка: ${err.message}`, true);
+        }
+    });
+});
+
+// ── Активация ─────────────────────────────────────────────────────────────────
+
+document.querySelectorAll(".js-activate-form").forEach((form) => {
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+            await sendJson(`/api/configs/${form.dataset.id}/activate`, "POST", {});
+            location.reload();
+        } catch (err) {
+            alert(`Ошибка активации: ${err.message}`);
+        }
+    });
+});
+
+// ── Тест подключения ──────────────────────────────────────────────────────────
+
+document.querySelectorAll(".js-test-form").forEach((form) => {
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector("button");
+        btn.disabled = true;
+        btn.textContent = "Запуск…";
+        try {
+            const r = await sendJson(`/api/configs/${form.dataset.id}/test-connection`, "POST", {});
+            btn.textContent = "Тест";
+            btn.disabled = false;
+            alert(`Тест поставлен в очередь.\nJob ID: ${r.data.job_id}\n\nРезультат появится во вкладке «Джобы».`);
+        } catch (err) {
+            btn.textContent = "Тест";
+            btn.disabled = false;
+            alert(`Ошибка: ${err.message}`);
+        }
+    });
+});
+
+// ── Удаление ──────────────────────────────────────────────────────────────────
+
+document.querySelectorAll(".js-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+        if (!confirm("Удалить конфигурацию?")) return;
+        try {
+            await sendJson(`/api/configs/${btn.dataset.id}`, "DELETE", null);
+            location.reload();
+        } catch (err) {
+            alert(`Ошибка удаления: ${err.message}`);
+        }
+    });
+});
+</script>
+{% endblock %}

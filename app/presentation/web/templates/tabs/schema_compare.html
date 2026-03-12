@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}Сравнение схем{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <div class="panel-header">
+        <h2>Сравнение схем</h2>
+        <p class="panel-subtitle">Сопоставление таблиц source / target и запуск сравнения структуры</p>
+    </div>
+
+    <div class="schema-toolbar">
+        <div class="actions">
+            <button type="button" id="compare-all-btn">Сравнить все</button>
+            <span id="schema-message" class="message"></span>
+        </div>
+        <div class="schema-filters" id="schema-filters">
+            <button type="button" class="filter-btn is-active" data-filter="all">Все</button>
+            <button type="button" class="filter-btn" data-filter="same">Одинаковые</button>
+            <button type="button" class="filter-btn" data-filter="different">Разные</button>
+            <button type="button" class="filter-btn" data-filter="missing">Отсутствуют</button>
+            <button type="button" class="filter-btn" data-filter="unknown">Неизвестно</button>
+        </div>
+        <div id="sse-state" class="sse-state">Live: подключение...</div>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Source</th>
+                    <th>Target</th>
+                    <th>Статус</th>
+                    <th>Последнее сравнение</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody id="mapping-rows">
+                <tr><td colspan="5">Загрузка...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const state = {
+    filter: "all",
+    rows: [],
+    detailsOpen: new Set(),
+    sse: null,
+    reconnectTimer: null,
+};
+
+function badgeClass(status) {
+    const map = {same: "badge-same", different: "badge-different", missing: "badge-missing"};
+    return "badge " + (map[status] || "badge-unknown");
+}
+
+function fmtTable(schema, table) {
+    return table ? `${schema || "public"}.${table}` : "—";
+}
+
+function showMsg(text) {
+    document.getElementById("schema-message").textContent = text || "";
+}
+
+async function api(url, method = "GET", body = null) {
+    const resp = await fetch(url, {
+        method,
+        headers: {"Content-Type": "application/json"},
+        body: body ? JSON.stringify(body) : null,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+}
+
+function renderRows() {
+    const tbody = document.getElementById("mapping-rows");
+    if (!state.rows.length) {
+        tbody.innerHTML = '<tr><td colspan="5">Нет строк для выбранного фильтра</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = state.rows.map((row) => {
+        const open = state.detailsOpen.has(row.id);
+        return `
+            <tr data-id="${row.id}">
+                <td>${fmtTable(row.source_schema, row.source_table)}</td>
+                <td>${fmtTable(row.target_schema, row.target_table)}</td>
+                <td><span class="${badgeClass(row.compare_status)}">${row.compare_status}</span></td>
+                <td>${row.last_compared_at ? row.last_compared_at.replace("T", " ").slice(0, 19) : "—"}</td>
+                <td class="actions">
+                    <button type="button" class="js-compare-one" data-id="${row.id}">Сравнить</button>
+                    <button type="button" class="js-toggle-details btn-secondary" data-id="${row.id}">${open ? "Скрыть" : "Детали"}</button>
+                </td>
+            </tr>
+            <tr data-details-for="${row.id}" style="display:${open ? "table-row" : "none"}">
+                <td colspan="5"><div class="details-box" id="details-${row.id}">Загрузка деталей...</div></td>
+            </tr>`;
+    }).join("");
+
+    document.querySelectorAll(".js-compare-one").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+            try {
+                const r = await api(`/api/schema/mappings/${btn.dataset.id}/compare`, "POST", {});
+                showMsg(`Job поставлен: ${r.job_id}`);
+            } catch (err) {
+                showMsg(`Ошибка: ${err.message}`);
+            }
+        });
+    });
+
+    document.querySelectorAll(".js-toggle-details").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+            const id = btn.dataset.id;
+            const row = document.querySelector(`tr[data-details-for="${id}"]`);
+            if (!row) return;
+            if (state.detailsOpen.has(id)) {
+                state.detailsOpen.delete(id);
+                row.style.display = "none";
+                btn.textContent = "Детали";
+            } else {
+                state.detailsOpen.add(id);
+                row.style.display = "table-row";
+                btn.textContent = "Скрыть";
+                await loadDetails(id);
+            }
+        });
+    });
+
+    state.detailsOpen.forEach((id) => loadDetails(id));
+}
+
+async function loadDetails(id) {
+    const box = document.getElementById(`details-${id}`);
+    if (!box) return;
+    try {
+        const d = await api(`/api/schema/mappings/${id}`);
+        box.innerHTML = `<pre>${JSON.stringify({
+            compare_status: d.compare_status,
+            source: {schema: d.source_schema, table: d.source_table},
+            target: {schema: d.target_schema, table: d.target_table},
+            diff_summary: d.diff_summary,
+            last_job: d.last_job,
+        }, null, 2)}</pre>`;
+    } catch (err) {
+        box.textContent = `Ошибка: ${err.message}`;
+    }
+}
+
+function updateFilterButtons(summary) {
+    const titles = {all: "Все", same: "Одинаковые", different: "Разные", missing: "Отсутствуют", unknown: "Неизвестно"};
+    document.querySelectorAll(".filter-btn").forEach((btn) => {
+        const key = btn.dataset.filter;
+        const cnt = summary && summary[key] != null ? summary[key] : 0;
+        btn.textContent = `${titles[key]} (${cnt})`;
+        btn.classList.toggle("is-active", key === state.filter);
+    });
+}
+
+async function reload() {
+    const data = await api(`/api/schema/mappings?filter=${encodeURIComponent(state.filter)}`);
+    state.rows = data.items || [];
+    updateFilterButtons(data.summary || {});
+    renderRows();
+}
+
+function setSseState(text, disconnected) {
+    const el = document.getElementById("sse-state");
+    el.textContent = `Live: ${text}`;
+    el.classList.toggle("is-disconnected", !!disconnected);
+}
+
+function connectSse() {
+    if (state.sse) state.sse.close();
+    setSseState("подключение...", true);
+    const es = new EventSource("/api/events/stream");
+    state.sse = es;
+
+    es.onopen = () => setSseState("подключено", false);
+
+    es.addEventListener("schema_compare_updated", () => reload().catch(() => {}));
+
+    es.addEventListener("job_updated", (e) => {
+        const p = JSON.parse(e.data || "{}");
+        if (p.job_type === "schema_compare_table" || p.job_type === "schema_compare_all") {
+            reload().catch(() => {});
+        }
+    });
+
+    es.onerror = () => {
+        setSseState("переподключение...", true);
+        es.close();
+        if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = setTimeout(connectSse, 2000);
+    };
+}
+
+document.getElementById("compare-all-btn").addEventListener("click", async () => {
+    try {
+        const r = await api("/api/schema/compare-all", "POST", {});
+        showMsg(`Запущено сравнение всех таблиц, job: ${r.job_id}`);
+    } catch (err) {
+        showMsg(`Ошибка: ${err.message}`);
+    }
+});
+
+document.querySelectorAll(".filter-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+        state.filter = btn.dataset.filter;
+        await reload().catch((err) => showMsg(`Ошибка: ${err.message}`));
+    });
+});
+
+reload().catch((err) => showMsg(`Ошибка загрузки: ${err.message}`));
+connectSse();
+</script>
+{% endblock %}
