@@ -252,11 +252,12 @@ class WorkerPoller:
         tgt = f"{payload.get('target_schema')}.{payload.get('target_table')}"
         if ok:
             diff = result.get("diff", {}) if isinstance(result, dict) else {}
+            cols = diff.get("columns", {})
             logger.info(
-                "Compare %s → %s: status=%s, missing_in_target=%s, extra_in_target=%s",
+                "Compare %s → %s: status=%s, cols_missing=%s, cols_extra=%s",
                 src, tgt, compare_status,
-                diff.get("missing_in_target", []),
-                diff.get("extra_in_target", []),
+                [i["name"] for i in cols.get("items", []) if i.get("status") == "missing_in_target"],
+                [i["name"] for i in cols.get("items", []) if i.get("status") == "extra_in_target"],
             )
         else:
             logger.warning("Compare %s → %s: status=%s, error=%s", src, tgt, compare_status, error_text)

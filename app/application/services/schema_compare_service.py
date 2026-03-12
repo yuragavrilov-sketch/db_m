@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 _ORACLE_SYSTEM_SCHEMAS = frozenset({
     "SYS", "SYSTEM", "OUTLN", "DBSNMP", "APPQOSSYS", "DBSFWUSER",
@@ -132,24 +132,62 @@ class SchemaCompareService:
             return False, {"reason": "active_configs_missing"}, "Active source/target configs are required", "unknown"
 
         try:
-            source_cols = self._load_columns(source_url, mapping.source_schema, mapping.source_table)
-            target_cols = self._load_columns(target_url, mapping.target_schema, mapping.target_table)
+            source_meta = self._load_table_metadata(source_url, mapping.source_schema, mapping.source_table)
+            target_meta = self._load_table_metadata(target_url, mapping.target_schema, mapping.target_table)
         except SQLAlchemyError as exc:
             return False, {}, f"DB compare error: {exc}", "unknown"
 
-        src_names = [c["name"] for c in source_cols]
-        tgt_names = [c["name"] for c in target_cols]
-        missing_in_target = [n for n in src_names if n not in tgt_names]
-        extra_in_target = [n for n in tgt_names if n not in src_names]
-        same = not missing_in_target and not extra_in_target
+        cols_diff = self._compare_columns(source_meta["columns"], target_meta["columns"])
+        idx_diff = self._compare_indexes(source_meta["indexes"], target_meta["indexes"])
+        pk_diff = self._compare_pk(source_meta["pk"], target_meta["pk"])
+        fk_diff = self._compare_fks(source_meta["foreign_keys"], target_meta["foreign_keys"])
+        uq_diff = self._compare_named_items(
+            source_meta["unique_constraints"],
+            target_meta["unique_constraints"],
+            key_fn=lambda x: x.get("name") or "",
+            eq_fn=lambda s, t: sorted(s.get("column_names", [])) == sorted(t.get("column_names", [])),
+            detail_fn=lambda x: {"columns": x.get("column_names", [])},
+        )
+        chk_diff = self._compare_named_items(
+            source_meta["check_constraints"],
+            target_meta["check_constraints"],
+            key_fn=lambda x: x.get("name") or "",
+            eq_fn=lambda s, t: s.get("sqltext", "") == t.get("sqltext", ""),
+            detail_fn=lambda x: {"sqltext": x.get("sqltext", "")},
+        )
+        trig_diff = self._compare_named_items(
+            source_meta["triggers"],
+            target_meta["triggers"],
+            key_fn=lambda x: x.get("name") or "",
+            eq_fn=lambda s, t: (
+                s.get("event") == t.get("event")
+                and s.get("timing") == t.get("timing")
+            ),
+            detail_fn=lambda x: {"event": x.get("event"), "timing": x.get("timing"), "enabled": x.get("enabled")},
+        )
+
+        same = all([
+            cols_diff["same"],
+            idx_diff["same"],
+            pk_diff["same"],
+            fk_diff["same"],
+            uq_diff["same"],
+            chk_diff["same"],
+            trig_diff["same"],
+        ])
 
         result = {
-            "source": {"schema": mapping.source_schema, "table": mapping.source_table, "columns": src_names},
-            "target": {"schema": mapping.target_schema, "table": mapping.target_table, "columns": tgt_names},
+            "source": {"schema": mapping.source_schema, "table": mapping.source_table},
+            "target": {"schema": mapping.target_schema, "table": mapping.target_table},
             "diff": {
-                "missing_in_target": missing_in_target,
-                "extra_in_target": extra_in_target,
                 "same": same,
+                "columns": cols_diff,
+                "indexes": idx_diff,
+                "primary_key": pk_diff,
+                "foreign_keys": fk_diff,
+                "unique_constraints": uq_diff,
+                "check_constraints": chk_diff,
+                "triggers": trig_diff,
             },
         }
         return same, result, None, "same" if same else "different"
@@ -229,6 +267,172 @@ class SchemaCompareService:
         if changed:
             db.session.commit()
 
+    # ── Comparison helpers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _compare_columns(source_cols: list, target_cols: list) -> dict[str, Any]:
+        src_by_name = {c["name"]: c for c in source_cols}
+        tgt_by_name = {c["name"]: c for c in target_cols}
+        all_names = list(dict.fromkeys(
+            [c["name"] for c in source_cols] + [c["name"] for c in target_cols]
+        ))
+        items = []
+        same = True
+        for name in all_names:
+            src = src_by_name.get(name)
+            tgt = tgt_by_name.get(name)
+            if src and tgt:
+                src_type = str(src.get("type", ""))
+                tgt_type = str(tgt.get("type", ""))
+                src_null = src.get("nullable", True)
+                tgt_null = tgt.get("nullable", True)
+                is_eq = src_type == tgt_type and src_null == tgt_null
+                status = "same" if is_eq else "different"
+                if not is_eq:
+                    same = False
+                items.append({
+                    "name": name,
+                    "source": {"type": src_type, "nullable": src_null,
+                               "default": str(src["default"]) if src.get("default") is not None else None},
+                    "target": {"type": tgt_type, "nullable": tgt_null,
+                               "default": str(tgt["default"]) if tgt.get("default") is not None else None},
+                    "status": status,
+                })
+            elif src:
+                same = False
+                items.append({
+                    "name": name,
+                    "source": {"type": str(src.get("type", "")), "nullable": src.get("nullable", True),
+                               "default": str(src["default"]) if src.get("default") is not None else None},
+                    "target": None,
+                    "status": "missing_in_target",
+                })
+            else:
+                same = False
+                items.append({
+                    "name": name,
+                    "source": None,
+                    "target": {"type": str(tgt.get("type", "")), "nullable": tgt.get("nullable", True),
+                               "default": str(tgt["default"]) if tgt.get("default") is not None else None},
+                    "status": "extra_in_target",
+                })
+        return {"items": items, "same": same}
+
+    @staticmethod
+    def _compare_indexes(source_idx: list, target_idx: list) -> dict[str, Any]:
+        def detail(i: dict) -> dict:
+            return {"columns": i.get("column_names", []), "unique": bool(i.get("unique", False))}
+
+        def eq(s: dict, t: dict) -> bool:
+            return (
+                sorted(s.get("column_names") or []) == sorted(t.get("column_names") or [])
+                and bool(s.get("unique")) == bool(t.get("unique"))
+            )
+
+        src_by_name = {i["name"]: i for i in source_idx if i.get("name")}
+        tgt_by_name = {i["name"]: i for i in target_idx if i.get("name")}
+        all_names = sorted(set(src_by_name) | set(tgt_by_name))
+        items = []
+        same = True
+        for name in all_names:
+            src = src_by_name.get(name)
+            tgt = tgt_by_name.get(name)
+            if src and tgt:
+                is_eq = eq(src, tgt)
+                if not is_eq:
+                    same = False
+                items.append({"name": name, "source": detail(src), "target": detail(tgt),
+                               "status": "same" if is_eq else "different"})
+            elif src:
+                same = False
+                items.append({"name": name, "source": detail(src), "target": None, "status": "missing_in_target"})
+            else:
+                same = False
+                items.append({"name": name, "source": None, "target": detail(tgt), "status": "extra_in_target"})
+        return {"items": items, "same": same}
+
+    @staticmethod
+    def _compare_pk(source_pk: dict, target_pk: dict) -> dict[str, Any]:
+        src_cols = sorted(source_pk.get("constrained_columns") or [])
+        tgt_cols = sorted(target_pk.get("constrained_columns") or [])
+        same = src_cols == tgt_cols
+        return {
+            "same": same,
+            "source": {"name": source_pk.get("name"), "columns": src_cols},
+            "target": {"name": target_pk.get("name"), "columns": tgt_cols},
+        }
+
+    @staticmethod
+    def _compare_fks(source_fks: list, target_fks: list) -> dict[str, Any]:
+        def detail(fk: dict) -> dict:
+            return {
+                "columns": fk.get("constrained_columns", []),
+                "referred_schema": fk.get("referred_schema"),
+                "referred_table": fk.get("referred_table"),
+                "referred_columns": fk.get("referred_columns", []),
+            }
+
+        def eq(s: dict, t: dict) -> bool:
+            return (
+                sorted(s.get("constrained_columns") or []) == sorted(t.get("constrained_columns") or [])
+                and s.get("referred_table") == t.get("referred_table")
+                and sorted(s.get("referred_columns") or []) == sorted(t.get("referred_columns") or [])
+            )
+
+        src_by_name = {fk.get("name") or "": fk for fk in source_fks}
+        tgt_by_name = {fk.get("name") or "": fk for fk in target_fks}
+        all_names = sorted(set(src_by_name) | set(tgt_by_name))
+        items = []
+        same = True
+        for name in all_names:
+            src = src_by_name.get(name)
+            tgt = tgt_by_name.get(name)
+            if src and tgt:
+                is_eq = eq(src, tgt)
+                if not is_eq:
+                    same = False
+                items.append({"name": name, "source": detail(src), "target": detail(tgt),
+                               "status": "same" if is_eq else "different"})
+            elif src:
+                same = False
+                items.append({"name": name, "source": detail(src), "target": None, "status": "missing_in_target"})
+            else:
+                same = False
+                items.append({"name": name, "source": None, "target": detail(tgt), "status": "extra_in_target"})
+        return {"items": items, "same": same}
+
+    @staticmethod
+    def _compare_named_items(
+        source_items: list,
+        target_items: list,
+        key_fn: Any,
+        eq_fn: Any,
+        detail_fn: Any,
+    ) -> dict[str, Any]:
+        src_by_key = {key_fn(x): x for x in source_items if key_fn(x)}
+        tgt_by_key = {key_fn(x): x for x in target_items if key_fn(x)}
+        all_keys = sorted(set(src_by_key) | set(tgt_by_key))
+        items = []
+        same = True
+        for key in all_keys:
+            src = src_by_key.get(key)
+            tgt = tgt_by_key.get(key)
+            if src and tgt:
+                is_eq = eq_fn(src, tgt)
+                if not is_eq:
+                    same = False
+                items.append({"name": key, "source": detail_fn(src), "target": detail_fn(tgt),
+                               "status": "same" if is_eq else "different"})
+            elif src:
+                same = False
+                items.append({"name": key, "source": detail_fn(src), "target": None, "status": "missing_in_target"})
+            else:
+                same = False
+                items.append({"name": key, "source": None, "target": detail_fn(tgt), "status": "extra_in_target"})
+        return {"items": items, "same": same}
+
+    # ── DB introspection ──────────────────────────────────────────────────────
+
     @staticmethod
     def _normalize_filter(status_filter: str) -> str:
         raw = (status_filter or "all").strip().lower()
@@ -264,6 +468,70 @@ class SchemaCompareService:
             engine.dispose()
 
     @staticmethod
+    def _load_table_metadata(database_url: str, schema: str, table: str) -> dict[str, Any]:
+        engine = create_engine(database_url)
+        is_oracle = engine.dialect.name == "oracle"
+        try:
+            insp = inspect(engine)
+            columns = insp.get_columns(table_name=table, schema=schema)
+            indexes = insp.get_indexes(table_name=table, schema=schema)
+            pk = insp.get_pk_constraint(table_name=table, schema=schema) or {}
+            fks = insp.get_foreign_keys(table_name=table, schema=schema)
+            try:
+                unique_constraints = insp.get_unique_constraints(table_name=table, schema=schema)
+            except Exception:
+                unique_constraints = []
+            try:
+                check_constraints = insp.get_check_constraints(table_name=table, schema=schema)
+            except Exception:
+                check_constraints = []
+
+            triggers = SchemaCompareService._load_triggers(engine, schema, table, is_oracle)
+
+            return {
+                "columns": columns,
+                "indexes": indexes,
+                "pk": pk,
+                "foreign_keys": fks,
+                "unique_constraints": unique_constraints,
+                "check_constraints": check_constraints,
+                "triggers": triggers,
+            }
+        finally:
+            engine.dispose()
+
+    @staticmethod
+    def _load_triggers(engine: Any, schema: str, table: str, is_oracle: bool) -> list[dict[str, Any]]:
+        try:
+            if is_oracle:
+                sql = text("""
+                    SELECT trigger_name AS name,
+                           triggering_event AS event,
+                           trigger_type AS timing,
+                           status AS enabled
+                    FROM all_triggers
+                    WHERE owner = :schema AND table_name = :table
+                """)
+                params = {"schema": schema.upper(), "table": table.upper()}
+            else:
+                sql = text("""
+                    SELECT trigger_name AS name,
+                           string_agg(event_manipulation, ', ') AS event,
+                           action_timing AS timing,
+                           'ENABLED' AS enabled
+                    FROM information_schema.triggers
+                    WHERE trigger_schema = :schema AND event_object_table = :table
+                    GROUP BY trigger_name, action_timing
+                """)
+                params = {"schema": schema, "table": table}
+
+            with engine.connect() as conn:
+                rows = conn.execute(sql, params).mappings().all()
+                return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    @staticmethod
     def _load_columns(database_url: str, schema: str, table: str) -> list[dict[str, Any]]:
         engine = create_engine(database_url)
         try:
@@ -296,6 +564,8 @@ class SchemaCompareService:
                     "job_type": job.job_type.value,
                     "requested_at": job.requested_at.isoformat() if job.requested_at else None,
                     "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+                    "result": job.result,
+                    "error_text": job.error_text,
                 }
                 if job
                 else None
