@@ -12,14 +12,13 @@ _ORACLE_SYSTEM_SCHEMAS = frozenset({
     "MDSYS", "OLAPSYS", "REMOTE_SCHEDULER_AGENT", "XDB", "XS$NULL",
     "LBACSYS", "ORDSYS", "ORDPLUGINS", "ORDDATA", "SI_INFORMTN_SCHEMA", "WMSYS",
 })
-from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.application.services.job_service import job_service
 from app.application.services.sse_broker import sse_broker
 from app.domain.enums import ConfigType, JobStatus, JobType
 from app.infrastructure.db.extensions import db
-from app.infrastructure.db.models import ActiveConfig, ConfigProfile, Job, SchemaMapping
+from app.infrastructure.db.models import ConfigProfile, Job, SchemaMapping
 
 
 def _utcnow() -> datetime:
@@ -239,10 +238,7 @@ class SchemaCompareService:
 
     @staticmethod
     def _get_active_db_settings(config_type: ConfigType) -> tuple[str | None, str | None]:
-        active = ActiveConfig.query.filter_by(config_type=config_type).first()
-        if not active:
-            return None, None
-        profile = db.session.get(ConfigProfile, active.profile_id)
+        profile = ConfigProfile.query.filter_by(config_type=config_type, is_enabled=True).first()
         if not profile:
             return None, None
         s = profile.settings_encrypted or {}

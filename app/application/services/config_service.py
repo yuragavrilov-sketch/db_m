@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.domain.enums import ConfigType
 from app.infrastructure.db.extensions import db
-from app.infrastructure.db.models import ActiveConfig, ConfigProfile
+from app.infrastructure.db.models import ConfigProfile
 
 # Обязательные поля settings для каждого типа конфигурации
 _REQUIRED_SETTINGS: dict[ConfigType, list[str]] = {
@@ -19,10 +19,6 @@ _REQUIRED_SETTINGS: dict[ConfigType, list[str]] = {
 
 
 class DuplicateConfigNameError(Exception):
-    pass
-
-
-class ActiveConfigDeleteError(Exception):
     pass
 
 
@@ -46,14 +42,8 @@ class ConfigService:
         query = ConfigProfile.query
         if config_type:
             query = query.filter_by(config_type=config_type)
-
         profiles = query.order_by(ConfigProfile.config_type, ConfigProfile.name).all()
-        active = {
-            row.config_type.value: str(row.profile_id)
-            for row in ActiveConfig.query.all()
-        }
-
-        return [self._to_dto(p, active.get(p.config_type.value) == str(p.id)) for p in profiles]
+        return [self._to_dto(p) for p in profiles]
 
     def create_config(
         self,
@@ -75,7 +65,7 @@ class ConfigService:
         except IntegrityError as exc:
             db.session.rollback()
             raise DuplicateConfigNameError from exc
-        return self._to_dto(profile, False)
+        return self._to_dto(profile)
 
     def update_config(
         self,
@@ -101,48 +91,18 @@ class ConfigService:
             db.session.rollback()
             raise DuplicateConfigNameError from exc
 
-        active = ActiveConfig.query.filter_by(config_type=profile.config_type).first()
-        return self._to_dto(profile, bool(active and active.profile_id == profile.id))
+        return self._to_dto(profile)
 
     def delete_config(self, profile_id: UUID) -> bool:
         profile = db.session.get(ConfigProfile, profile_id)
         if not profile:
             return False
-
-        active = ActiveConfig.query.filter_by(config_type=profile.config_type).first()
-        if active and active.profile_id == profile.id:
-            raise ActiveConfigDeleteError
-
         db.session.delete(profile)
         db.session.commit()
         return True
 
-    def activate_config(self, profile_id: UUID, selected_by: str = "web-ui") -> dict[str, Any] | None:
-        profile = db.session.get(ConfigProfile, profile_id)
-        if not profile:
-            return None
-
-        active = ActiveConfig.query.filter_by(config_type=profile.config_type).first()
-        if active:
-            active.profile_id = profile.id
-            active.selected_by = selected_by
-        else:
-            db.session.add(
-                ActiveConfig(
-                    config_type=profile.config_type,
-                    profile_id=profile.id,
-                    selected_by=selected_by,
-                )
-            )
-        db.session.commit()
-
-        return {
-            "config_type": profile.config_type.value,
-            "active_profile_id": str(profile.id),
-        }
-
     @staticmethod
-    def _to_dto(profile: ConfigProfile, is_active: bool) -> dict[str, Any]:
+    def _to_dto(profile: ConfigProfile) -> dict[str, Any]:
         return {
             "id": str(profile.id),
             "config_type": profile.config_type.value,
@@ -150,7 +110,6 @@ class ConfigService:
             "description": profile.description,
             "settings": profile.settings_encrypted or {},
             "is_enabled": profile.is_enabled,
-            "is_active": is_active,
             "created_at": profile.created_at.isoformat() if profile.created_at else None,
             "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
         }

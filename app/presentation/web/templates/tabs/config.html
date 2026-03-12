@@ -43,7 +43,6 @@
                 <tr>
                     <th>Название</th>
                     <th>Подключение</th>
-                    <th>Активна</th>
                     <th>Включена</th>
                 </tr>
             </thead>
@@ -60,18 +59,13 @@
                         <code class="conn-summary">{{ cfg.conn_summary }}</code>
                     </td>
                     <td>
-                        <span class="badge {% if cfg.is_active %}badge-same{% else %}badge-unknown{% endif %}">
-                            {{ 'да' if cfg.is_active else 'нет' }}
-                        </span>
-                    </td>
-                    <td>
                         <span class="badge {% if cfg.is_enabled %}badge-same{% else %}badge-missing{% endif %}">
                             {{ 'да' if cfg.is_enabled else 'нет' }}
                         </span>
                     </td>
                 </tr>
                 <tr class="edit-row">
-                    <td colspan="4">
+                    <td colspan="3">
                         <details>
                             <summary>Редактировать: {{ cfg.name }}</summary>
                             <form class="form-grid form-inline js-update-form"
@@ -101,7 +95,7 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="4" class="text-muted">Нет конфигураций этого типа</td></tr>
+                <tr><td colspan="3" class="text-muted">Нет конфигураций этого типа</td></tr>
             {% endfor %}
             </tbody>
         </table>

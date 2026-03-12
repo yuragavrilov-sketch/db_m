@@ -6,8 +6,7 @@ from typing import Any
 
 from app.application.services.connection_test_service import ConnectionTestService
 from app.domain.enums import ConfigType
-from app.infrastructure.db.extensions import db
-from app.infrastructure.db.models import ActiveConfig, ConfigProfile
+from app.infrastructure.db.models import ConfigProfile
 
 _COMPONENTS: dict[ConfigType, str] = {
     ConfigType.SOURCE_DB: "source_db",
@@ -40,14 +39,9 @@ class HealthCheckService:
         sse_broker.publish("health_status_updated", self.get_all())
 
     def _check_one(self, config_type: ConfigType, key: str) -> None:
-        active = ActiveConfig.query.filter_by(config_type=config_type).first()
-        if not active:
-            self._set(key, "unknown", "Нет активной конфигурации")
-            return
-
-        profile = db.session.get(ConfigProfile, active.profile_id)
+        profile = ConfigProfile.query.filter_by(config_type=config_type, is_enabled=True).first()
         if not profile:
-            self._set(key, "unknown", "Профиль не найден")
+            self._set(key, "unknown", "Нет конфигурации")
             return
 
         ok, result, error = self._tester.run_test({"settings": profile.settings_encrypted or {}})

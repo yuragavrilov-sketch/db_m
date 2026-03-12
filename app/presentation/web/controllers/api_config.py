@@ -4,17 +4,12 @@ from uuid import UUID
 
 from flask import Blueprint, jsonify, request
 
-from app.application.services.background_executor import background_executor
 from app.application.services.config_service import (
-    ActiveConfigDeleteError,
     DuplicateConfigNameError,
     InvalidSettingsError,
     config_service,
 )
-from app.application.services.job_service import job_service
 from app.domain.enums import ConfigType
-from app.infrastructure.db.extensions import db
-from app.infrastructure.db.models import ConfigProfile
 
 
 api_config_bp = Blueprint("api_config", __name__, url_prefix="/api/configs")
@@ -81,37 +76,7 @@ def update_config(profile_id: UUID):
 
 @api_config_bp.delete("/<uuid:profile_id>")
 def delete_config(profile_id: UUID):
-    try:
-        deleted = config_service.delete_config(profile_id)
-    except ActiveConfigDeleteError:
-        return jsonify({"error": "cannot delete active config"}), 409
-
+    deleted = config_service.delete_config(profile_id)
     if not deleted:
         return jsonify({"error": "not found"}), 404
     return "", 204
-
-
-@api_config_bp.post("/<uuid:profile_id>/activate")
-def activate_config(profile_id: UUID):
-    result = config_service.activate_config(profile_id)
-    if not result:
-        return jsonify({"error": "not found"}), 404
-    return jsonify(result)
-
-
-@api_config_bp.post("/<uuid:profile_id>/test-connection")
-def test_connection(profile_id: UUID):
-    profile = db.session.get(ConfigProfile, profile_id)
-    if not profile:
-        return jsonify({"error": "not found"}), 404
-
-    job = job_service.enqueue_connection_test(
-        config_profile_id=profile.id,
-        payload={
-            "config_type": profile.config_type.value,
-            "settings": profile.settings_encrypted,
-            "name": profile.name,
-        },
-    )
-    background_executor.enqueue(job.id)
-    return jsonify({"job_id": str(job.id), "status": "queued"}), 202
