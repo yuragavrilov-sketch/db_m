@@ -5,6 +5,13 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import create_engine, inspect
+
+_ORACLE_SYSTEM_SCHEMAS = frozenset({
+    "SYS", "SYSTEM", "OUTLN", "DBSNMP", "APPQOSSYS", "DBSFWUSER",
+    "GGSYS", "ANONYMOUS", "CTXSYS", "DVSYS", "DVF", "GSMADMIN_INTERNAL",
+    "MDSYS", "OLAPSYS", "REMOTE_SCHEDULER_AGENT", "XDB", "XS$NULL",
+    "LBACSYS", "ORDSYS", "ORDPLUGINS", "ORDDATA", "SI_INFORMTN_SCHEMA", "WMSYS",
+})
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -243,11 +250,14 @@ class SchemaCompareService:
     @staticmethod
     def _list_tables(database_url: str) -> list[dict[str, str]]:
         engine = create_engine(database_url)
+        is_oracle = database_url.lower().startswith("oracle")
         try:
             insp = inspect(engine)
             result: list[dict[str, str]] = []
             for schema in insp.get_schema_names():
                 if schema in {"pg_catalog", "information_schema"}:
+                    continue
+                if is_oracle and schema.upper() in _ORACLE_SYSTEM_SCHEMAS:
                     continue
                 for table in insp.get_table_names(schema=schema):
                     result.append({"schema": schema, "table": table})

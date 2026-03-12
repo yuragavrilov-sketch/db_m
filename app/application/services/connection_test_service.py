@@ -16,8 +16,10 @@ class ConnectionTestService:
         if database_url:
             try:
                 engine = create_engine(database_url)
+                is_oracle = database_url.lower().startswith("oracle")
+                probe = text("SELECT 1 FROM DUAL") if is_oracle else text("SELECT 1")
                 with engine.connect() as conn:
-                    conn.execute(text("select 1"))
+                    conn.execute(probe)
                 return True, {"kind": "db", "message": "Database connection successful"}, None
             except Exception as exc:  # noqa: BLE001
                 return False, {"kind": "db", "message": "Database connection failed"}, str(exc)

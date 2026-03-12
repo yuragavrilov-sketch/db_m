@@ -9,26 +9,102 @@
 <body>
     <header class="topbar">
         <div class="topbar-inner">
-            <div class="brand-block">
-                <h1>DB Migration</h1>
-                <p class="topbar-subtitle">Web Console</p>
+            <div class="topbar-row">
+                <div class="brand-block">
+                    <h1>DB Migration</h1>
+                    <p class="topbar-subtitle">Web Console</p>
+                </div>
+                <nav class="tabs" aria-label="Основная навигация">
+                    <a href="{{ url_for('pages.config_tab') }}"
+                       class="{% if request.path == '/' or request.path.startswith('/config') %}is-active{% endif %}">
+                        Конфигурация
+                    </a>
+                    <a href="{{ url_for('pages.schema_tab') }}"
+                       class="{% if request.path.startswith('/schema') %}is-active{% endif %}">
+                        Сравнение схем
+                    </a>
+                    <a href="{{ url_for('pages.jobs_tab') }}"
+                       class="{% if request.path.startswith('/jobs') %}is-active{% endif %}">
+                        Джобы
+                    </a>
+                </nav>
             </div>
-            <nav class="tabs" aria-label="Основная навигация">
-                <a href="{{ url_for('pages.config_tab') }}"
-                   class="{% if request.path == '/' or request.path.startswith('/config') %}is-active{% endif %}">
-                    Конфигурация
-                </a>
-                <a href="{{ url_for('pages.schema_tab') }}"
-                   class="{% if request.path.startswith('/schema') %}is-active{% endif %}">
-                    Сравнение схем
-                </a>
-                <a href="{{ url_for('pages.jobs_tab') }}"
-                   class="{% if request.path.startswith('/jobs') %}is-active{% endif %}">
-                    Джобы
-                </a>
-            </nav>
+            <div class="status-bar">
+                <div class="status-chips">
+                    <div class="status-chip" id="chip-source_db">
+                        <span class="chip-dot is-unknown" id="dot-source_db"></span>
+                        <span class="chip-label">Oracle (источник)</span>
+                        <span class="chip-status" id="status-source_db">—</span>
+                    </div>
+                    <div class="status-chip" id="chip-target_db">
+                        <span class="chip-dot is-unknown" id="dot-target_db"></span>
+                        <span class="chip-label">Oracle (приёмник)</span>
+                        <span class="chip-status" id="status-target_db">—</span>
+                    </div>
+                    <div class="status-chip" id="chip-kafka">
+                        <span class="chip-dot is-unknown" id="dot-kafka"></span>
+                        <span class="chip-label">Kafka</span>
+                        <span class="chip-status" id="status-kafka">—</span>
+                    </div>
+                    <div class="status-chip" id="chip-kafka_connect">
+                        <span class="chip-dot is-unknown" id="dot-kafka_connect"></span>
+                        <span class="chip-label">Kafka Connect</span>
+                        <span class="chip-status" id="status-kafka_connect">—</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </header>
+
+    <script>
+    (function () {
+        const COMPONENTS = ['source_db', 'target_db', 'kafka', 'kafka_connect'];
+
+        function applyStatus(data) {
+            COMPONENTS.forEach(function (key) {
+                var info = data[key];
+                if (!info) return;
+                var dot = document.getElementById('dot-' + key);
+                var statusEl = document.getElementById('status-' + key);
+                if (!dot || !statusEl) return;
+                dot.className = 'chip-dot is-' + info.status;
+                var label = {ok: 'OK', error: 'Ошибка', unknown: '—', checking: '...'}[info.status] || info.status;
+                statusEl.textContent = label;
+                statusEl.title = info.message || '';
+            });
+        }
+
+        function markChecking() {
+            COMPONENTS.forEach(function (key) {
+                var dot = document.getElementById('dot-' + key);
+                if (dot) dot.className = 'chip-dot is-checking';
+            });
+        }
+
+        function fetchStatus() {
+            fetch('/api/health-status')
+                .then(function (r) { return r.json(); })
+                .then(applyStatus)
+                .catch(function () {});
+        }
+
+        fetchStatus();
+
+        var es = new EventSource('/api/events/stream');
+        es.addEventListener('health_status_updated', function (e) {
+            try { applyStatus(JSON.parse(e.data)); } catch (_) {}
+        });
+        es.onerror = function () {
+            setTimeout(function () {
+                es.close();
+                es = new EventSource('/api/events/stream');
+                es.addEventListener('health_status_updated', function (e) {
+                    try { applyStatus(JSON.parse(e.data)); } catch (_) {}
+                });
+            }, 3000);
+        };
+    })();
+    </script>
 
     <div class="content-wrap">
         <main class="content">

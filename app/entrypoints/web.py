@@ -3,9 +3,11 @@ from alembic import command
 from alembic.config import Config
 
 from app.application.services.background_executor import background_executor
+from app.application.services.health_monitor import health_monitor
 from app.infrastructure.db.extensions import db
 from app.infrastructure.db.models import ActiveConfig, ConfigProfile, Job, SchemaMapping
 from app.presentation.web.controllers.api_config import api_config_bp
+from app.presentation.web.controllers.api_health import api_health_bp
 from app.presentation.web.controllers.api_jobs import api_jobs_bp
 from app.presentation.web.controllers.api_schema import api_schema_bp
 from app.presentation.web.controllers.pages import pages_bp
@@ -26,6 +28,7 @@ def create_web_app() -> Flask:
 
     app.register_blueprint(pages_bp)
     app.register_blueprint(api_config_bp)
+    app.register_blueprint(api_health_bp)
     app.register_blueprint(api_jobs_bp)
     app.register_blueprint(api_schema_bp)
     app.register_blueprint(sse_bp)
@@ -57,4 +60,5 @@ def create_web_app() -> Flask:
         command.upgrade(_alembic_cfg(), "head")
 
     background_executor.start(app)
+    health_monitor.start(app, interval_seconds=settings.status_check_interval)
     return app
