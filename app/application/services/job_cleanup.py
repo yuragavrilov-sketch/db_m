@@ -29,15 +29,29 @@ class JobCleanup:
     def _run(self, app: Flask, interval_seconds: int) -> None:
         from app.domain.enums import JobStatus
         from app.infrastructure.db.extensions import db
-        from app.infrastructure.db.models import Job
+        from app.infrastructure.db.models import Job, SchemaMapping
 
         with app.app_context():
             while True:
                 time.sleep(interval_seconds)
                 try:
+                    success_ids = [
+                        row.id
+                        for row in db.session.query(Job.id)
+                        .filter(Job.status == JobStatus.SUCCESS)
+                        .all()
+                    ]
+                    if not success_ids:
+                        continue
+
+                    # Обнуляем FK в schema_mappings перед удалением
+                    db.session.query(SchemaMapping).filter(
+                        SchemaMapping.last_job_id.in_(success_ids)
+                    ).update({"last_job_id": None}, synchronize_session=False)
+
                     deleted = (
                         db.session.query(Job)
-                        .filter(Job.status == JobStatus.SUCCESS)
+                        .filter(Job.id.in_(success_ids))
                         .delete(synchronize_session=False)
                     )
                     db.session.commit()
