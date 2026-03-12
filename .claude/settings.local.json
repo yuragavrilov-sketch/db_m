@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python -c \"from app.application.services.worker_poller import WorkerPoller, worker_poller; print\\(''worker_poller OK''\\)\")",
-      "Bash(python -c \"from app import create_app; print\\(''create_app OK''\\)\")"
+      "Bash(python -c \"from app import create_app; print\\(''create_app OK''\\)\")",
+      "Bash(python -c \"from app.entrypoints.worker import create_worker_app; print\\(''OK''\\)\")"
     ]
   }
 }

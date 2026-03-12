@@ -180,6 +180,7 @@ class WorkerPoller:
     # ------------------------------------------------------------------
 
     def _mark_running(self, job: Job, message: str) -> None:
+        logger.info("Job %s [%s] started — %s", job.id, job.job_type.value, message)
         job.status = JobStatus.RUNNING
         job.started_at = _utcnow()
         job.progress_log = list(job.progress_log or []) + [
@@ -195,6 +196,21 @@ class WorkerPoller:
         job_service.publish_job_updated(job, changed_fields=["status", "started_at", "progress_log"])
 
     def _finish(self, job: Job, ok: bool, message: str, meta: dict | None = None) -> None:
+        elapsed = (
+            (_utcnow() - job.started_at).total_seconds()
+            if job.started_at
+            else None
+        )
+        if ok:
+            logger.info(
+                "Job %s [%s] finished OK — %s (%.2fs)",
+                job.id, job.job_type.value, message, elapsed or 0,
+            )
+        else:
+            logger.error(
+                "Job %s [%s] FAILED — %s (%.2fs): %s",
+                job.id, job.job_type.value, message, elapsed or 0, job.error_text or "",
+            )
         job.finished_at = _utcnow()
         job.status = JobStatus.SUCCESS if ok else JobStatus.FAILED
         job.locked_by = None
@@ -231,6 +247,20 @@ class WorkerPoller:
 
         ok, result, error_text, compare_status = schema_compare_service.compare_table_now(mapping_id)
 
+        payload = job.payload or {}
+        src = f"{payload.get('source_schema')}.{payload.get('source_table')}"
+        tgt = f"{payload.get('target_schema')}.{payload.get('target_table')}"
+        if ok:
+            diff = result.get("diff", {}) if isinstance(result, dict) else {}
+            logger.info(
+                "Compare %s → %s: status=%s, missing_in_target=%s, extra_in_target=%s",
+                src, tgt, compare_status,
+                diff.get("missing_in_target", []),
+                diff.get("extra_in_target", []),
+            )
+        else:
+            logger.warning("Compare %s → %s: status=%s, error=%s", src, tgt, compare_status, error_text)
+
         job = db.session.get(Job, job.id)
         if not job:
             return
@@ -255,13 +285,19 @@ class WorkerPoller:
         listing = schema_compare_service.list_mappings(status_filter="all")
         mapping_ids = [UUID(item["id"]) for item in listing.get("items", [])]
 
+        logger.info("Compare-all: found %d mappings to compare", len(mapping_ids))
+
         enqueued: list[str] = []
         for mapping_id in mapping_ids:
             table_job = schema_compare_service.enqueue_compare_table(mapping_id, requested_by=job.requested_by)
             if not table_job:
+                logger.warning("Compare-all: could not enqueue sub-job for mapping %s", mapping_id)
                 continue
             enqueued.append(str(table_job.id))
+            logger.debug("Compare-all: enqueued sub-job %s for mapping %s", table_job.id, mapping_id)
             # Sub-jobs are persisted in DB; the poller will pick them up in subsequent cycles.
+
+        logger.info("Compare-all: enqueued %d sub-jobs", len(enqueued))
 
         job = db.session.get(Job, job.id)
         if not job:
