@@ -396,13 +396,14 @@ class SchemaCompareService:
     @staticmethod
     def _compare_indexes(source_idx: list, target_idx: list) -> dict[str, Any]:
         def detail(i: dict) -> dict:
-            return {"columns": i.get("column_names", []), "unique": bool(i.get("unique", False))}
+            return {"columns": [c for c in (i.get("column_names") or []) if c is not None],
+                    "unique": bool(i.get("unique", False))}
+
+        def _cols(i: dict) -> list[str]:
+            return sorted(c for c in (i.get("column_names") or []) if c is not None)
 
         def eq(s: dict, t: dict) -> bool:
-            return (
-                sorted(s.get("column_names") or []) == sorted(t.get("column_names") or [])
-                and bool(s.get("unique")) == bool(t.get("unique"))
-            )
+            return _cols(s) == _cols(t) and bool(s.get("unique")) == bool(t.get("unique"))
 
         return SchemaCompareService._compare_named(
             source_idx, target_idx,
