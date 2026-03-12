@@ -11,8 +11,8 @@ from app.domain.enums import ConfigType
 pages_bp = Blueprint("pages", __name__)
 
 _CONFIG_TYPE_LABELS: dict[str, str] = {
-    ConfigType.SOURCE_DB.value: "База-источник",
-    ConfigType.TARGET_DB.value: "База-приёмник",
+    ConfigType.SOURCE_DB.value: "Oracle — источник",
+    ConfigType.TARGET_DB.value: "Oracle — приёмник",
     ConfigType.KAFKA.value: "Kafka — брокер",
     ConfigType.KAFKA_CONNECT.value: "Kafka Connect",
 }
