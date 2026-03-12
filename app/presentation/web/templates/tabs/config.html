@@ -45,7 +45,6 @@
                     <th>Подключение</th>
                     <th>Активна</th>
                     <th>Включена</th>
-                    <th>Действия</th>
                 </tr>
             </thead>
             <tbody>
@@ -70,17 +69,9 @@
                             {{ 'да' if cfg.is_enabled else 'нет' }}
                         </span>
                     </td>
-                    <td class="actions">
-                        <form class="js-activate-form" data-id="{{ cfg.id }}">
-                            <button type="submit">Активировать</button>
-                        </form>
-                        <form class="js-test-form" data-id="{{ cfg.id }}">
-                            <button type="submit" class="btn-secondary">Тест</button>
-                        </form>
-                    </td>
                 </tr>
                 <tr class="edit-row">
-                    <td colspan="5">
+                    <td colspan="4">
                         <details>
                             <summary>Редактировать: {{ cfg.name }}</summary>
                             <form class="form-grid form-inline js-update-form"
@@ -110,7 +101,7 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="5" class="text-muted">Нет конфигураций этого типа</td></tr>
+                <tr><td colspan="4" class="text-muted">Нет конфигураций этого типа</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -314,41 +305,6 @@ document.querySelectorAll(".js-update-form").forEach((form) => {
             location.reload();
         } catch (err) {
             showMsg(msg, `Ошибка: ${err.message}`, true);
-        }
-    });
-});
-
-// ── Активация ─────────────────────────────────────────────────────────────────
-
-document.querySelectorAll(".js-activate-form").forEach((form) => {
-    form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        try {
-            await sendJson(`/api/configs/${form.dataset.id}/activate`, "POST", {});
-            location.reload();
-        } catch (err) {
-            alert(`Ошибка активации: ${err.message}`);
-        }
-    });
-});
-
-// ── Тест подключения ──────────────────────────────────────────────────────────
-
-document.querySelectorAll(".js-test-form").forEach((form) => {
-    form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const btn = form.querySelector("button");
-        btn.disabled = true;
-        btn.textContent = "Запуск…";
-        try {
-            const r = await sendJson(`/api/configs/${form.dataset.id}/test-connection`, "POST", {});
-            btn.textContent = "Тест";
-            btn.disabled = false;
-            alert(`Тест поставлен в очередь.\nJob ID: ${r.data.job_id}\n\nРезультат появится во вкладке «Джобы».`);
-        } catch (err) {
-            btn.textContent = "Тест";
-            btn.disabled = false;
-            alert(`Ошибка: ${err.message}`);
         }
     });
 });
