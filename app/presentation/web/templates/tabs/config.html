@@ -191,10 +191,16 @@ function renderSettingsFields(configType, s) {
              value="${esc(p.port || "1521")}" placeholder="1521" required>
     </label>
   </div>
-  <label>Service Name
-    <input name="s_service" value="${esc(p.service || "")}" placeholder="orcl" required>
-    <span class="field-hint">Oracle service name (например: orcl, XEPDB1, myservice)</span>
-  </label>
+  <div class="form-row-2">
+    <label>Service Name
+      <input name="s_service" value="${esc(p.service || "")}" placeholder="orcl" required>
+      <span class="field-hint">Oracle service name (например: orcl, XEPDB1)</span>
+    </label>
+    <label>Схема
+      <input name="s_schema" value="${esc(s.schema || "")}" placeholder="MY_SCHEMA">
+      <span class="field-hint">Имя схемы для сравнения (необязательно)</span>
+    </label>
+  </div>
   <div class="form-row-2">
     <label>Пользователь
       <input name="s_username" value="${esc(p.username || "")}" placeholder="system" required>
@@ -236,13 +242,16 @@ function renderSettingsFields(configType, s) {
 
 function buildSettings(form, configType) {
     if (configType === "source_db" || configType === "target_db") {
-        return {database_url: buildOracleUrl(
+        const schema = form.s_schema.value.trim();
+        const settings = {database_url: buildOracleUrl(
             form.s_host.value.trim(),
             form.s_port.value.trim() || "1521",
             form.s_service.value.trim(),
             form.s_username.value.trim(),
             form.s_password.value,
         )};
+        if (schema) settings.schema = schema;
+        return settings;
     }
     if (configType === "kafka") {
         return {bootstrap_servers: form.s_bootstrap_servers.value.trim()};

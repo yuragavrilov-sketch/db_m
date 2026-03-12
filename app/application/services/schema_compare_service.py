@@ -127,8 +127,8 @@ class SchemaCompareService:
         if not mapping.target_table or not mapping.target_schema:
             return False, {"reason": "target_not_mapped"}, "Target table is not mapped", "missing"
 
-        source_url = self._get_active_db_url(ConfigType.SOURCE_DB)
-        target_url = self._get_active_db_url(ConfigType.TARGET_DB)
+        source_url, _ = self._get_active_db_settings(ConfigType.SOURCE_DB)
+        target_url, _ = self._get_active_db_settings(ConfigType.TARGET_DB)
         if not source_url or not target_url:
             return False, {"reason": "active_configs_missing"}, "Active source/target configs are required", "unknown"
 
@@ -182,14 +182,14 @@ class SchemaCompareService:
         )
 
     def _sync_mappings_from_active_configs(self) -> None:
-        source_url = self._get_active_db_url(ConfigType.SOURCE_DB)
-        target_url = self._get_active_db_url(ConfigType.TARGET_DB)
+        source_url, source_schema = self._get_active_db_settings(ConfigType.SOURCE_DB)
+        target_url, target_schema = self._get_active_db_settings(ConfigType.TARGET_DB)
         if not source_url:
             return
 
         try:
-            source_tables = self._list_tables(source_url)
-            target_tables = self._list_tables(target_url) if target_url else []
+            source_tables = self._list_tables(source_url, source_schema)
+            target_tables = self._list_tables(target_url, target_schema) if target_url else []
         except SQLAlchemyError:
             return
 
@@ -238,29 +238,31 @@ class SchemaCompareService:
         return "different" if raw == "diff" else raw
 
     @staticmethod
-    def _get_active_db_url(config_type: ConfigType) -> str | None:
+    def _get_active_db_settings(config_type: ConfigType) -> tuple[str | None, str | None]:
         active = ActiveConfig.query.filter_by(config_type=config_type).first()
         if not active:
-            return None
+            return None, None
         profile = db.session.get(ConfigProfile, active.profile_id)
         if not profile:
-            return None
-        return (profile.settings_encrypted or {}).get("database_url")
+            return None, None
+        s = profile.settings_encrypted or {}
+        return s.get("database_url"), s.get("schema") or None
 
     @staticmethod
-    def _list_tables(database_url: str) -> list[dict[str, str]]:
+    def _list_tables(database_url: str, schema: str | None = None) -> list[dict[str, str]]:
         engine = create_engine(database_url)
         is_oracle = database_url.lower().startswith("oracle")
         try:
             insp = inspect(engine)
             result: list[dict[str, str]] = []
-            for schema in insp.get_schema_names():
-                if schema in {"pg_catalog", "information_schema"}:
+            schemas = [schema] if schema else insp.get_schema_names()
+            for s in schemas:
+                if s in {"pg_catalog", "information_schema"}:
                     continue
-                if is_oracle and schema.upper() in _ORACLE_SYSTEM_SCHEMAS:
+                if is_oracle and s.upper() in _ORACLE_SYSTEM_SCHEMAS:
                     continue
-                for table in insp.get_table_names(schema=schema):
-                    result.append({"schema": schema, "table": table})
+                for table in insp.get_table_names(schema=s):
+                    result.append({"schema": s, "table": table})
             return result
         finally:
             engine.dispose()
